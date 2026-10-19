@@ -21,27 +21,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
 
       - name: Set up JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           java-version: 21
           distribution: zulu
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: app/src/main/native/mishka_core/go.mod
-          # 默认缓存键找工作目录根的 go.sum，本仓根目录没有；不指到实际被编译的模块上
-          # 就是每次 miss，全量重下 mihomo 的依赖树
           cache-dependency-path: app/src/main/native/mishka_core/go.sum
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
+
+      - name: Decode Android signing key
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        run: echo ${{ secrets.SIGNING_KEY }} | base64 -d > keystore.jks
 
       - name: Download GeoIP files
         run: ./gradlew :app:downloadGeoFiles

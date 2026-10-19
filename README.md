@@ -52,7 +52,7 @@
 ### 环境要求
 
 - JDK 21
-- Android SDK + NDK（含 clang），SDK 版本见 `buildSrc/ProjectConfig.kt`
+- Android SDK + NDK（含 clang），SDK 版本见 `build-logic/src/main/kotlin/ProjectConfig.kt`
 - Go（版本见 `mihomo/go.mod`）
 - Git（用于 submodule 与版本号生成）
 
