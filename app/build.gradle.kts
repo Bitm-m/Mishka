@@ -42,17 +42,20 @@ val gitVersionCode = getGitVersionCode()
 
 val properties = Properties()
 runCatching { project.rootProject.file("local.properties").inputStream().use { properties.load(it) } }
-val keystorePath: String? = properties.getProperty("KEYSTORE_PATH") ?: System.getenv("KEYSTORE_PATH")
+val keystorePath: String? = (properties.getProperty("KEYSTORE_PATH") ?: System.getenv("KEYSTORE_PATH"))?.takeIf { it.isNotBlank() }
 val keystorePwd: String? = properties.getProperty("KEYSTORE_PASS") ?: System.getenv("KEYSTORE_PASS")
 val alias: String? = properties.getProperty("KEY_ALIAS") ?: System.getenv("KEY_ALIAS")
 val pwd: String? = properties.getProperty("KEY_PASSWORD") ?: System.getenv("KEY_PASSWORD")
+val keystoreFile = keystorePath?.let { path ->
+    file(path).takeIf { it.exists() } ?: project.rootProject.file(path).takeIf { it.exists() }
+}
 
 @Suppress("UnstableApiUsage")
 android {
-    if (keystorePath != null) {
+    if (keystoreFile != null) {
         signingConfigs {
             create("release") {
-                storeFile = file(keystorePath)
+                storeFile = keystoreFile
                 storePassword = keystorePwd
                 keyAlias = alias
                 keyPassword = pwd
@@ -65,10 +68,10 @@ android {
         release {
             optimization.enable = true
             vcsInfo.include = false
-            if (keystorePath != null) signingConfig = signingConfigs.getByName("release")
+            if (keystoreFile != null) signingConfig = signingConfigs.getByName("release")
         }
         debug {
-            if (keystorePath != null) signingConfig = signingConfigs.getByName("release")
+            if (keystoreFile != null) signingConfig = signingConfigs.getByName("release")
         }
     }
     buildFeatures {
@@ -136,7 +139,7 @@ androidComponents {
     finalizeDsl { ext ->
         // AGP 9: 关闭 nonMinifiedRelease 继承自 release 的 optimization.enable
         ext.buildTypes.findByName("nonMinifiedRelease")?.optimization?.enable = false
-        if (keystorePath == null) {
+        if (keystoreFile == null) {
             val debugSigning = ext.signingConfigs.getByName("debug")
             listOf("nonMinifiedRelease", "benchmarkRelease").forEach { name ->
                 ext.buildTypes.findByName(name)?.signingConfig = debugSigning
