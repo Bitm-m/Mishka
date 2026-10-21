@@ -32,7 +32,6 @@ import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -140,7 +139,6 @@ fun ProxyScreen(
 
     val showPopup = remember { mutableStateOf(false) }
     val showSortPopup = remember { mutableStateOf(false) }
-    var iconCacheVersion by remember { mutableIntStateOf(0) }
     val coroutineScope = rememberCoroutineScope()
 
     // 展开状态上提屏幕级：节点行是顶层 lazy item，存 item 内会随其销毁丢失，故用可保存的 SnapshotStateList 统一持有
@@ -288,22 +286,11 @@ fun ProxyScreen(
                                     ListPopupColumn {
                                         DropdownImpl(
                                             text = stringResource(R.string.proxy_single_column),
-                                            optionSize = 2,
+                                            optionSize = 1,
                                             isSelected = singleColumn,
                                             index = 0,
                                             onSelectedIndexChange = {
                                                 viewModel?.updateSingleColumn(!singleColumn)
-                                                showPopup.value = false
-                                            },
-                                        )
-                                        DropdownImpl(
-                                            text = stringResource(R.string.proxy_refresh_icon),
-                                            optionSize = 2,
-                                            isSelected = false,
-                                            index = 1,
-                                            onSelectedIndexChange = {
-                                                coroutineScope.launch { IconLoader.clear() }
-                                                iconCacheVersion++
                                                 showPopup.value = false
                                             },
                                         )
@@ -400,7 +387,6 @@ fun ProxyScreen(
                                 ProxyGroupHeader(
                                     group = group,
                                     isExpanded = isExpanded,
-                                    iconCacheVersion = iconCacheVersion,
                                     isTesting = group.name in uiState.testingGroups,
                                     onTestDelay = { viewModel?.testGroupDelay(group.name) },
                                     onUnfix = { viewModel?.unfixProxy(group.name) },
@@ -489,7 +475,6 @@ private fun HoldDownEffect(holdDown: Boolean, interactionSource: MutableInteract
 private fun ProxyGroupHeader(
     group: ProxyGroupUi,
     isExpanded: Boolean,
-    iconCacheVersion: Int,
     isTesting: Boolean,
     onTestDelay: () -> Unit,
     onUnfix: () -> Unit,
@@ -520,7 +505,6 @@ private fun ProxyGroupHeader(
         GroupIcon(
             icon = group.icon,
             name = group.name,
-            cacheVersion = iconCacheVersion,
         )
 
         Spacer(Modifier.width(12.dp))
@@ -618,13 +602,15 @@ private fun ProxyGroupHeader(
 private fun GroupIcon(
     icon: String,
     name: String,
-    cacheVersion: Int,
 ) {
     if (icon.isNotEmpty()) {
-        var bitmap by remember(icon, cacheVersion) { mutableStateOf<ImageBitmap?>(null) }
+        val iconVersion by IconLoader.iconVersion.collectAsStateWithLifecycle()
+        var bitmap by remember(icon) { mutableStateOf<ImageBitmap?>(null) }
 
-        LaunchedEffect(icon, cacheVersion) {
-            bitmap = IconLoader.loadIcon(icon)
+        LaunchedEffect(icon, iconVersion) {
+            if (bitmap == null) {
+                bitmap = IconLoader.loadIcon(icon)
+            }
         }
         val current = bitmap
         if (current != null) {
