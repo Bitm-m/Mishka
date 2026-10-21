@@ -153,7 +153,7 @@ CMake `dependsOn(buildMihomo)`，产两个轻量件链 libmihomo.so（IMPORTED +
 
 **`/proxies` 不含 provider 节点**：mihomo 的 `GET /proxies` 与 `findProxyByName` 中间件只覆盖 runtime proxies（`proxies:` 段 + 代理组），proxy-provider 节点在这套命名空间里**查不到 / 404**。故节点详情需把 `/providers/proxies` 各 provider 的 `proxies` 合并进结果（runtime 优先补缺，`ProxyViewModel` 维护 `nodeProviderMap`）；provider 节点单测走 `GET /providers/proxies/{provider}/{node}/healthcheck`；组测速与组选择不受影响。仅 provider 型（模板）订阅命中。
 
-**GLOBAL 组常驻代理页**：`GET /group` 里 GLOBAL 与普通组同级（Selector），`loadProxies` 既拿它的 `all` 当组排序基准，也把它本身排进列表——`mode == "global"` 时置顶（唯一生效出口），其余沉底；mode 从 `GET /configs` 现取。非全局模式下是否留在列表由 `PROXY_SHOW_GLOBAL_GROUP`（默认开）控制，**全局模式无视该开关强制显示**，否则退回「生效出口不可选」的老 bug。关掉只影响展示：`orderMap` 仍从 `globalGroup.all` 算，过滤只在 UI 层做。**默认开的理由**：rule 模式下 GLOBAL 虽不参与路由，但其 `all` 是全部节点 + 全部组，`/group/GLOBAL/delay` 因此是唯一的一键全量测速入口，且提前选好的出口切到 global 立即生效。
+**代理组 hidden 遵循与 GLOBAL 排序**：`GET /group` 输出的代理组遵循 `hidden` 属性，`hidden: true` 的组（如均衡子组、规则别名组）不展示到代理页。GLOBAL 组同样遵循 `hidden`，默认不隐藏时在非全局模式沉底（保留一键全量测速入口）、`mode == "global"` 置顶；若配置声明 `hidden: true`，在非全局模式下隐藏，**全局模式无视该标记强制显示**（否则生效出口不可选）。`orderMap` 始终从 `globalGroup.all` 计算。
 
 **出站模式提示而非隐藏代理组**：`GET /group` / `GET /proxies` 的返回与 `mode` 无关；direct 模式 mihomo 在 `resolveMetadata` 直接返回 DIRECT、根本不查组，global 模式只有 GLOBAL 决定出口。两种模式仍显示全量组是**正确**的：`PUT /proxies/{group}` 在任何模式下都被接受并记住，切回 rule 立即生效，延迟测试照常有效——隐藏会砍掉「先挑好节点再切回规则模式」的正常用法。缺的只是告知，故 `ProxyUiState.mode` 携带小写 mode，`ProxyScreen` 据此在首个 lazy item 渲染提示卡；mode 常量在 `ProxyViewModel.companion`，禁止屏幕里裸写字符串。
 
