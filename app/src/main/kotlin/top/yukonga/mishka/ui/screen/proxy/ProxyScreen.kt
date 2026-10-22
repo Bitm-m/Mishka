@@ -1,9 +1,14 @@
 package top.yukonga.mishka.ui.screen.proxy
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.basicMarquee
@@ -136,6 +141,7 @@ fun ProxyScreen(
     val uiState = viewModel?.uiState?.collectAsStateWithLifecycle()?.value ?: ProxyUiState()
     val sortOption = viewModel?.sortOption?.collectAsStateWithLifecycle()?.value ?: 0
     val singleColumn = viewModel?.singleColumn?.collectAsStateWithLifecycle()?.value == true
+    val showGroupIcons = viewModel?.showGroupIcons?.collectAsStateWithLifecycle()?.value ?: true
     // 0 = 行内两列并排，1 = 行内竖排
     val singleColumnProgress = animateFloatAsState(
         targetValue = if (singleColumn) 1f else 0f,
@@ -339,11 +345,21 @@ fun ProxyScreen(
                                     ListPopupColumn {
                                         DropdownImpl(
                                             text = stringResource(R.string.proxy_single_column),
-                                            optionSize = 1,
+                                            optionSize = 2,
                                             isSelected = singleColumn,
                                             index = 0,
                                             onSelectedIndexChange = {
                                                 viewModel?.updateSingleColumn(!singleColumn)
+                                                showPopup.value = false
+                                            },
+                                        )
+                                        DropdownImpl(
+                                            text = stringResource(R.string.proxy_show_group_icons),
+                                            optionSize = 2,
+                                            isSelected = showGroupIcons,
+                                            index = 1,
+                                            onSelectedIndexChange = {
+                                                viewModel?.updateShowGroupIcons(!showGroupIcons)
                                                 showPopup.value = false
                                             },
                                         )
@@ -450,6 +466,7 @@ fun ProxyScreen(
                             ) {
                                 ProxyGroupHeader(
                                     group = group,
+                                    showIcon = showGroupIcons,
                                     isExpanded = isExpanded,
                                     expandProgress = groupProgress,
                                     isTesting = group.name in uiState.testingGroups,
@@ -550,6 +567,7 @@ private fun HoldDownEffect(holdDown: Boolean, interactionSource: MutableInteract
 @Composable
 private fun ProxyGroupHeader(
     group: ProxyGroupUi,
+    showIcon: Boolean,
     isExpanded: Boolean,
     expandProgress: FloatState? = null,
     isTesting: Boolean,
@@ -575,12 +593,22 @@ private fun ProxyGroupHeader(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        GroupIcon(
-            icon = group.icon,
-            name = group.name,
-        )
-
-        Spacer(Modifier.width(12.dp))
+        AnimatedVisibility(
+            visible = showIcon,
+            enter = slideInHorizontally(tween(300)) { -it } +
+                    expandHorizontally(tween(300), expandFrom = Alignment.Start),
+            exit = slideOutHorizontally(tween(300)) { -it } +
+                    shrinkHorizontally(tween(300), shrinkTowards = Alignment.Start),
+            label = "groupIconVisibility",
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                GroupIcon(
+                    icon = group.icon,
+                    name = group.name,
+                )
+                Spacer(Modifier.width(12.dp))
+            }
+        }
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -659,6 +687,7 @@ private fun ProxyGroupHeader(
             imageVector = MiuixIcons.Basic.ArrowRight,
             contentDescription = null,
             modifier = Modifier
+                .size(15.dp)
                 .graphicsLayer {
                     scaleX = if (layoutDirection == LayoutDirection.Rtl) -1f else 1f
                     val p = expandProgress?.floatValue ?: if (isExpanded) 1f else 0f
@@ -689,7 +718,7 @@ private fun GroupIcon(
                 bitmap = current,
                 contentDescription = name,
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(32.dp)
                     .squircleClip(8.dp),
             )
         } else {
@@ -704,7 +733,7 @@ private fun GroupIcon(
 private fun DefaultGroupIcon(name: String) {
     Box(
         modifier = Modifier
-            .size(36.dp)
+            .size(32.dp)
             .squircleBackground(MiuixTheme.colorScheme.primary.copy(alpha = 0.1f), 8.dp),
         contentAlignment = Alignment.Center,
     ) {

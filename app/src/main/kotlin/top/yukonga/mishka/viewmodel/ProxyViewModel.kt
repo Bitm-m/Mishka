@@ -79,6 +79,11 @@ class ProxyViewModel(
     private val _singleColumn = MutableStateFlow(loadInitialSingleColumn())
     val singleColumn: StateFlow<Boolean> = _singleColumn.asStateFlow()
 
+    private val _showGroupIcons = MutableStateFlow(
+        storage?.getString(StorageKeys.PROXY_GROUP_SHOW_ICONS, "true") != "false"
+    )
+    val showGroupIcons: StateFlow<Boolean> = _showGroupIcons.asStateFlow()
+
     private var repository: MihomoRepository? = null
 
     // mihomo 重启切 client 时取消旧的 loadProxies 协程，防止其 HTTP 响应已读完但 UI 写回
@@ -107,6 +112,11 @@ class ProxyViewModel(
 
     private fun loadInitialSingleColumn(): Boolean =
         storage?.getString(StorageKeys.PROXY_NODE_SINGLE_COLUMN, "false") == "true"
+
+    fun updateShowGroupIcons(enabled: Boolean) {
+        _showGroupIcons.value = enabled
+        storage?.putString(StorageKeys.PROXY_GROUP_SHOW_ICONS, enabled.toString())
+    }
 
     fun setRepository(repo: MihomoRepository?) {
         if (repository === repo) return
