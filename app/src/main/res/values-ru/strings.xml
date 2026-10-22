@@ -77,6 +77,10 @@
     <string name="common_save">Сохранить</string>
     <string name="common_back">Назад</string>
     <string name="common_refresh">Обновить</string>
+    <string name="refresh_pulling">Потяните для обновления</string>
+    <string name="refresh_release">Отпустите для обновления</string>
+    <string name="refresh_refreshing">Обновление…</string>
+    <string name="refresh_complete">Обновление завершено</string>
     <string name="common_more">Еще</string>
     <string name="common_close">Закрыть</string>
     <string name="common_delete">Удалить</string>

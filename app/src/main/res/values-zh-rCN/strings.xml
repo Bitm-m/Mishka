@@ -77,6 +77,10 @@
     <string name="common_save">保存</string>
     <string name="common_back">返回</string>
     <string name="common_refresh">刷新</string>
+    <string name="refresh_pulling">下拉刷新</string>
+    <string name="refresh_release">松开刷新</string>
+    <string name="refresh_refreshing">刷新中…</string>
+    <string name="refresh_complete">刷新完成</string>
     <string name="common_more">更多</string>
     <string name="common_close">关闭</string>
     <string name="common_delete">删除</string>
