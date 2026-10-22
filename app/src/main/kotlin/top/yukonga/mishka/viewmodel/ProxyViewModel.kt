@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 import top.yukonga.mishka.data.database.SelectionDao
 import top.yukonga.mishka.data.database.SelectionEntity
 import top.yukonga.mishka.domain.repository.MihomoRepository
+import top.yukonga.mishka.domain.model.ProxyNode
 import top.yukonga.mishka.platform.PlatformStorage
 import top.yukonga.mishka.platform.StorageKeys
 import top.yukonga.mishka.util.describe
@@ -184,21 +185,8 @@ class ProxyViewModel(
                         val nodeTypes = mutableMapOf<String, String>()
                         node.all.forEach { proxyName ->
                             val proxy = allProxies[proxyName]
-                            val lastDelay = proxy?.history?.lastOrNull()?.delay
-                            if (lastDelay != null && lastDelay > 0) {
-                                delays[proxyName] = lastDelay
-                            } else if (lastDelay == 0) {
-                                // delay=0 表示 healthcheck 超时/失败，映射为 -1 让 UI 显示"超时"
-                                delays[proxyName] = -1
-                            } else if (proxy != null && proxy.now.isNotEmpty()) {
-                                val nowProxy = allProxies[proxy.now]
-                                val nowDelay = nowProxy?.history?.lastOrNull()?.delay
-                                if (nowDelay != null && nowDelay > 0) {
-                                    delays[proxyName] = nowDelay
-                                } else if (nowDelay == 0) {
-                                    delays[proxyName] = -1
-                                }
-                            }
+                            val resolved = resolveDelay(proxyName, allProxies)
+                            if (resolved != null) delays[proxyName] = resolved
                             if (proxy != null && proxy.type.isNotEmpty()) {
                                 nodeTypes[proxyName] = proxy.type
                             }
@@ -331,6 +319,8 @@ class ProxyViewModel(
                 _uiState.value = _uiState.value.copy(
                     testingGroups = (_uiState.value.testingGroups - group).toPersistentSet(),
                 )
+                // 返回值不含子组名，重拉后才能同步父组延迟。
+                if (repository === repo) loadProxies()
             }
         }
     }
@@ -425,5 +415,21 @@ class ProxyViewModel(
         const val MODE_GLOBAL = "global"
         const val MODE_DIRECT = "direct"
         private const val TAG = "ProxyViewModel"
+    }
+
+    /** 子组沿 now 取当前出口；步数上限防配置环。 */
+    private fun resolveDelay(name: String, allProxies: Map<String, ProxyNode>): Int? {
+        var current = name
+        var remaining = allProxies.size + 1
+        while (remaining-- > 0) {
+            val proxy = allProxies[current] ?: return null
+            if (proxy.now.isNotEmpty()) {
+                current = proxy.now
+                continue
+            }
+            val delay = proxy.history.lastOrNull()?.delay ?: return null
+            return if (delay > 0) delay else -1
+        }
+        return null
     }
 }
