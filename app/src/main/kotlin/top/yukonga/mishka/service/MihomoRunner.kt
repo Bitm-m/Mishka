@@ -50,12 +50,10 @@ class MihomoRunner(private val context: Context) {
         }
 
     /**
-     * 尝试重连已持久化的 mihomo 进程。三重校验任一失败均返回 false：
-     *   1. PID 存活（kill -0）
-     *   2. cmdline 含 libmihomo_runner.so（防 PID 复用撞其他 root 进程）
-     *   3. stored secret 能通过 /configs 鉴权（防 secret 漂移导致 UI 假 Running）
-     * 校验阶段**不**修改任何 field，三条全过之后才落状态。
-     * 订阅一致性由调用方在此之前校验（persisted subscriptionId vs 请求的 subscriptionId）。
+     * 尝试重连已持久化的 mihomo 进程。PID、进程名、controller 鉴权与透明 DNS
+     * 必须同时有效；旧核心只有 API 可用不代表 DNS 已接管。
+     * 校验阶段不修改任何 field，全部通过后才认领进程。
+     * 订阅一致性由调用方在此之前校验。
      */
     fun attachToExisting(
         pid: Int,
@@ -72,8 +70,12 @@ class MihomoRunner(private val context: Context) {
             Log.w(TAG, "Attach failed: wrong cmdline (pid=$pid, cmdline=${cmdline.take(64)})")
             return false
         }
-        if (!isApiAuthorized(secret, externalController)) {
-            Log.w(TAG, "Attach failed: auth failed (pid=$pid)")
+        if (!RootHelper.hasCoreCredentials(pid)) {
+            Log.w(TAG, "Attach failed: incompatible ROOT process credentials (pid=$pid)")
+            return false
+        }
+        if (!isApiAuthorized(secret, externalController) || !isRootDnsReady(secret, externalController)) {
+            Log.w(TAG, "Attach failed: controller or ROOT DNS is not ready (pid=$pid)")
             return false
         }
         childPid = pid
@@ -146,6 +148,8 @@ class MihomoRunner(private val context: Context) {
                     add("--vpn-platform-socket"); add(requireNotNull(vpnPlatformSocket))
                     add("--vpn-ready-file"); add(requireNotNull(readyFile).absolutePath)
                     if (vpnHttpFd >= 0) { add("--vpn-http-fd"); add(vpnHttpFd.toString()) }
+                } else {
+                    add("--root-dns")
                 }
                 if (transformPath != null) {
                     add("--transform"); add(transformPath)
@@ -184,6 +188,14 @@ class MihomoRunner(private val context: Context) {
             }
 
             Log.i(TAG, "mihomo child pid=$childPid (root=$useRoot)")
+            if (useRoot && !RootHelper.hasCoreCredentials(childPid)) {
+                errorMessage = context.getString(
+                    R.string.error_generic_start_failed,
+                    "ROOT process must run as 0:${RootHelper.CORE_GID}",
+                )
+                stop()
+                return@withContext false
+            }
 
             // 轮询 API 确认 mihomo 真正就绪，进程退出则快速失败
             val result = waitForReady(useRoot, workDir)
@@ -198,10 +210,10 @@ class MihomoRunner(private val context: Context) {
             Log.i(TAG, "mihomo started: pid=$childPid (root=$useRoot)")
             true
         } catch (e: CancellationException) {
-            if (!useRoot) stop()
+            stop()
             throw e
         } catch (e: Exception) {
-            if (!useRoot) stop()
+            stop()
             errorMessage = context.getString(R.string.error_generic_start_failed, e.describe())
             Log.e(TAG, "Failed to start mihomo", e)
             false
@@ -245,7 +257,7 @@ class MihomoRunner(private val context: Context) {
 
     /**
      * 轮询等待 mihomo 就绪。返回 null 表示成功，返回错误消息表示失败。
-     * VPN 等原生的成功确认文件和带鉴权 API；ROOT 保留 API + 日志扫描策略。
+     * VPN 等原生的成功确认文件和带鉴权 API；ROOT 另需透明 DNS 入口就绪。
      */
     private suspend fun waitForReady(useRoot: Boolean, workDir: File): String? {
         var rootRound = 0
@@ -254,7 +266,7 @@ class MihomoRunner(private val context: Context) {
             delay(500)
             val checkLiveness = !useRoot || rootRound++ % LIVENESS_CHECK_EVERY == 0
             if (useRoot) {
-                if (isApiReady()) {
+                if (isRootDnsReady(secret, externalController, timeoutMs = 500)) {
                     delay(500)
                     return scanLogForTunError(true, workDir)
                 }
@@ -338,18 +350,6 @@ class MihomoRunner(private val context: Context) {
         return if (messages.isNotEmpty()) messages.joinToString("\n") else errorLines.joinToString("\n")
     }
 
-    private fun isApiReady(): Boolean {
-        return try {
-            val conn = URL("http://$externalController/version").openConnection() as HttpURLConnection
-            conn.connectTimeout = 500
-            conn.readTimeout = 500
-            conn.responseCode // 任何响应（200/401 等）都说明 API 已就绪
-            conn.disconnect()
-            true
-        } catch (_: Exception) {
-            false
-        }
-    }
 
     /**
      * 带 Bearer secret 鉴权地探测 /configs（/configs 在 mihomo 各版本均强制鉴权，
@@ -364,6 +364,22 @@ class MihomoRunner(private val context: Context) {
             val code = conn.responseCode
             conn.disconnect()
             code in 200..299
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun isRootDnsReady(secret: String, externalController: String, timeoutMs: Int = 1500): Boolean {
+        return try {
+            val conn = URL("http://$externalController/dns/root").openConnection() as HttpURLConnection
+            try {
+                conn.connectTimeout = timeoutMs
+                conn.readTimeout = timeoutMs
+                conn.setRequestProperty("Authorization", "Bearer $secret")
+                conn.responseCode == HttpURLConnection.HTTP_NO_CONTENT
+            } finally {
+                conn.disconnect()
+            }
         } catch (_: Exception) {
             false
         }

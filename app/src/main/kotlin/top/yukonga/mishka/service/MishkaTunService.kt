@@ -180,6 +180,9 @@ class MishkaTunService : VpnService() {
                 if (hadRootPid || hasRoot) {
                     val residualTun = storage.getString(StorageKeys.ROOT_TUN_DEVICE, RuntimeOverrideBuilder.DEFAULT_TUN_DEVICE)
                     RootHelper.cleanupOrphanedMihomo(tunDevice = residualTun)
+                    RootTetherHijacker.teardown()
+                    RootTproxyApplier.teardown()
+                    check(RootDnsApplier.teardown()) { "Failed to remove ROOT DNS routing" }
                     RootRuntimeCache.releaseAll(this@MishkaTunService, subscriptionRepository)
                     storage.putString(StorageKeys.ROOT_MIHOMO_PID, "")
                     storage.putString(StorageKeys.ROOT_MIHOMO_SECRET, "")

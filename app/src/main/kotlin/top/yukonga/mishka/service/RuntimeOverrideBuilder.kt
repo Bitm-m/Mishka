@@ -106,7 +106,10 @@ object RuntimeOverrideBuilder {
             // ROOT 保持既有的默认注入，VPN 未显式覆写时沿用订阅/核心值。
             tcpConcurrent = if (tunMode == TunMode.Vpn) userOverride.tcpConcurrent else userOverride.tcpConcurrent ?: true,
             findProcessMode = if (tunMode == TunMode.Vpn) userOverride.findProcessMode else userOverride.findProcessMode ?: "off",
-            dns = buildDnsOverride(tunMode, userOverride.dns),
+            dns = buildDnsOverride(
+                tunMode, userOverride.dns,
+                storage.getString(StorageKeys.VPN_ALLOW_IPV6, "false") == "true",
+            ),
             tun = buildTunOverride(context, tunMode, tunFd, userOverride.tun),
             profile = ProfileOverride(storeSelected = false, storeFakeIp = true),
         )
@@ -116,17 +119,14 @@ object RuntimeOverrideBuilder {
         return file
     }
 
-    /**
-     * RootTproxy 下把 mihomo DNS listener 强制监听在 `0.0.0.0:1053`，
-     * iptables 的 `nat REDIRECT --to-ports 1053` 把系统 DNS 查询导到这里。
-     * 保留用户的 `enhanced-mode`（fake-ip / redir-host 任选）和其他字段。
-     */
-    private fun buildDnsOverride(tunMode: TunMode, userDns: DnsOverride?): DnsOverride? {
-        if (tunMode != TunMode.RootTproxy) return userDns
+    // 系统缓存跨应用共享，ROOT 的真实地址映射由 runtime Option 在解析后强制设置。
+    // 不能在解析前清掉 fake-IP 模式，否则旧 VPN DNS 答案所需的反查池不会被加载。
+    private fun buildDnsOverride(tunMode: TunMode, userDns: DnsOverride?, ipv6Enabled: Boolean): DnsOverride? {
+        if (tunMode == TunMode.Vpn) return userDns
         val base = userDns ?: DnsOverride()
         return base.copy(
-            enable = true,
-            listen = "0.0.0.0:${RootTproxyApplier.DNS_PORT}",
+            listen = "",
+            ipv6 = ipv6Enabled,
         )
     }
 

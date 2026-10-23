@@ -60,6 +60,7 @@ func runMihomo() int {
 		vpnHTTPFD           int
 		vpnPlatformSocket   string
 		vpnReadyFile        string
+		rootDNS             bool
 	)
 	fs.StringVar(&homeDir, "d", "", "set configuration directory")
 	fs.StringVar(&configFile, "f", "", "specify configuration file")
@@ -74,8 +75,22 @@ func runMihomo() int {
 	fs.IntVar(&vpnHTTPFD, "vpn-http-fd", -1, "inherited loopback HTTP listener fd")
 	fs.StringVar(&vpnPlatformSocket, "vpn-platform-socket", "", "Android VPN platform abstract socket")
 	fs.StringVar(&vpnReadyFile, "vpn-ready-file", "", "publish VPN readiness after listeners start")
+	fs.BoolVar(&rootDNS, "root-dns", false, "serve transparent ROOT DNS on UDP and TCP port 53")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return 2
+	}
+	if rootDNS {
+		invalid := false
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "vpn-gateway", "vpn-http-fd", "vpn-platform-socket", "vpn-ready-file":
+				invalid = true
+			}
+		})
+		if invalid {
+			fmt.Fprintln(os.Stderr, "root-dns cannot be combined with VPN flags")
+			return 1
+		}
 	}
 
 	vpnMode := vpnGateway != ""
@@ -157,6 +172,9 @@ func runMihomo() int {
 
 	var options []hub.Option
 	var vpnTUNFD int
+	if rootDNS {
+		options = append(options, rootDNSOption)
+	}
 	if vpnMode {
 		option, err := vpnGatewayOption(vpnGateway)
 		if err != nil {
@@ -206,6 +224,18 @@ func runMihomo() int {
 		fmt.Fprintln(os.Stderr, "Parse config:", err)
 		return 1
 	}
+	var rootServer *rootDNSServer
+	var rootErrors <-chan error
+	if rootDNS {
+		rootServer, err = startRootDNS()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "start ROOT DNS:", err)
+			return 1
+		}
+		defer rootServer.Close()
+		rootErrors = rootServer.errors
+		log.Infoln("[ROOT] Transparent DNS listening on UDP and TCP port 53")
+	}
 	if vpnMode && !listener.TunListenerReady() {
 		fmt.Fprintln(os.Stderr, "VPN TUN listener did not start")
 		return 1
@@ -241,10 +271,20 @@ func runMihomo() int {
 		select {
 		case <-termSig:
 			return 0
+		case err := <-rootErrors:
+			fmt.Fprintln(os.Stderr, err)
+			return 1
 		case <-hupSig:
-			if err := hub.Parse(configBytes, options...); err != nil {
+			reload := func() error { return hub.Parse(configBytes, options...) }
+			var err error
+			if rootServer != nil {
+				err = rootServer.Reload(reload)
+			} else {
+				err = reload()
+			}
+			if err != nil {
 				log.Errorln("Reload config: %s", err.Error())
-				if vpnMode {
+				if vpnMode || rootDNS {
 					return 1
 				}
 			}
