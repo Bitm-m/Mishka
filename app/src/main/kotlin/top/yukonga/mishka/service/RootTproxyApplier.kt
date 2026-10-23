@@ -45,6 +45,7 @@ object RootTproxyApplier {
     private const val CHAIN_PRE = "mishka_tproxy_pre"
     private const val CHAIN_OUT = "mishka_tproxy_out"
     private const val CHAIN_DIVERT = "mishka_tproxy_divert"
+
     // 仅用于迁移清理旧版本 NAT DNS，不再安装这些链。
     private const val LEGACY_DNS_PRE = "mishka_dns_pre"
     private const val LEGACY_DNS_OUT = "mishka_dns_out"

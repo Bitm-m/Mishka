@@ -4,8 +4,8 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import top.yukonga.mishka.R
@@ -22,8 +22,10 @@ class MihomoRunner(private val context: Context) {
 
     // Service 串行管理 start/stop；此锁额外隔离 VPN monitor 与 stop，不包住 ROOT 的 su 调用。
     private val processLock = Any()
+
     @Volatile
     private var childPid: Int = -1
+
     @Volatile
     private var isRootMode = false
     private var vpnReadyFile: File? = null
@@ -147,7 +149,9 @@ class MihomoRunner(private val context: Context) {
                     add("--vpn-gateway"); add(requireNotNull(vpnGateway))
                     add("--vpn-platform-socket"); add(requireNotNull(vpnPlatformSocket))
                     add("--vpn-ready-file"); add(requireNotNull(readyFile).absolutePath)
-                    if (vpnHttpFd >= 0) { add("--vpn-http-fd"); add(vpnHttpFd.toString()) }
+                    if (vpnHttpFd >= 0) {
+                        add("--vpn-http-fd"); add(vpnHttpFd.toString())
+                    }
                 } else {
                     add("--root-dns")
                 }

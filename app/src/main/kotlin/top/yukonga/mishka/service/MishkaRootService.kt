@@ -505,6 +505,7 @@ class MishkaRootService : Service() {
                 Submode.Tun -> if (!attach || shouldReapplyOnAttach(storage, RootTetherHijacker::anyRulesPresent)) {
                     if (attach) applyTetherRulesActive(storage, tproxyForTether) else applyTetherRules(storage, tproxyForTether)
                 }
+
                 Submode.Tproxy -> applyTproxyRules(storage)
             }
             val proxyTether = submode == Submode.Tproxy || RootTetherHijacker.Mode.from(

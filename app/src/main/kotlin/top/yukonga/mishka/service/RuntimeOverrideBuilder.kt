@@ -170,10 +170,12 @@ object RuntimeOverrideBuilder {
                 include = if (filtered.isNotEmpty()) filtered else listOf("-")
                 exclude = null
             }
+
             AppProxyMode.DenySelected -> {
                 include = null
                 exclude = (packages + selfPkg).distinct()
             }
+
             AppProxyMode.AllowAll -> {
                 include = null
                 exclude = listOf(selfPkg)

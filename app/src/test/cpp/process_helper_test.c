@@ -83,7 +83,9 @@ static int test_nanosleep(const struct timespec *duration, struct timespec *rema
 #define waitpid test_waitpid
 #define kill test_kill
 #define nanosleep test_nanosleep
+
 #include "../../main/cpp/process_helper.c"
+
 #undef waitid
 #undef waitpid
 #undef kill

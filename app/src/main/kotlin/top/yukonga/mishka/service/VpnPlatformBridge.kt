@@ -157,6 +157,7 @@ class VpnPlatformBridge(
                         } ?: false
                         output.writeByte(if (protected) 1 else 0)
                     }
+
                     2 -> {
                         if (!descriptors.isNullOrEmpty()) throw IOException("Unexpected platform descriptors")
                         val protocol = input.readInt()
@@ -170,6 +171,7 @@ class VpnPlatformBridge(
                         output.writeInt(bytes.size)
                         output.write(bytes)
                     }
+
                     else -> throw IOException("Unknown VPN platform opcode: $opcode")
                 }
                 output.flush()

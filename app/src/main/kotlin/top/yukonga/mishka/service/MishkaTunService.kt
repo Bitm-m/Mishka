@@ -106,6 +106,7 @@ class MishkaTunService : VpnService() {
                                 ?: ProxyServiceController(this@MishkaTunService).resolveStartSubscriptionId()
                             if (id != null) startProxy(id, command.startId) else stopSelfResult(command.startId)
                         }
+
                         ACTION_RESTART -> restartProxy(command.subscriptionId, command.startId)
                         ACTION_STOP -> stopProxy(command.startId)
                         ACTION_DIED -> if (generation == command.generation) stopProxy(activeStartId, command.error)
@@ -147,6 +148,7 @@ class MishkaTunService : VpnService() {
                     startId = startId,
                 )
             )
+
             null, SERVICE_INTERFACE -> {
                 // 校验也在前驱收敛后执行，不能从新实例的主线程覆盖旧实例状态。
                 commands.trySend(VpnCommand(ACTION_START, startId = startId))
@@ -351,6 +353,7 @@ class MishkaTunService : VpnService() {
                 check(installed.isNotEmpty()) { getString(R.string.error_vpn_no_selected_apps) }
                 installed.forEach { addAllowedApplication(it) }
             }
+
             "DenySelected" -> {
                 addDisallowedApplication(packageName)
                 packages.filter { it != packageName }.forEach { pkg ->
@@ -361,6 +364,7 @@ class MishkaTunService : VpnService() {
                     }
                 }
             }
+
             else -> addDisallowedApplication(packageName)
         }
         setMetered(false)
