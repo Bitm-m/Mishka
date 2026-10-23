@@ -248,21 +248,25 @@ class MihomoRunner(private val context: Context) {
      * VPN 等原生的成功确认文件和带鉴权 API；ROOT 保留 API + 日志扫描策略。
      */
     private suspend fun waitForReady(useRoot: Boolean, workDir: File): String? {
-        repeat(20) { round ->
+        var rootRound = 0
+        var vpnApiChecks = 0
+        while (!useRoot || rootRound < 20) {
             delay(500)
+            val checkLiveness = !useRoot || rootRound++ % LIVENESS_CHECK_EVERY == 0
             if (useRoot) {
                 if (isApiReady()) {
                     delay(500)
                     return scanLogForTunError(true, workDir)
                 }
             } else {
-                // API 可能先于 TUN 初始化，日志又受用户 log-level 控制；原生明确确认后才发布 Running。
+                // provider 初始化不占用 API 探测预算，原生 ready 后才开始计数。
                 val ready = vpnReadyFile?.takeIf { it.isFile }?.readText() == "ready"
-                if (ready && isApiAuthorized(secret, externalController, timeoutMs = 500)) return null
+                if (ready) {
+                    if (isApiAuthorized(secret, externalController, timeoutMs = 500)) return null
+                    if (++vpnApiChecks >= 20) break
+                }
             }
-            // 进程退出则快速失败。ROOT 下 /proc 是 hidepid，判活要 fork 一次 su，
-            // 故降到 2s 一次——总预算 10s，晚 1.5s 发现死亡不影响诊断
-            if (round % LIVENESS_CHECK_EVERY != 0) return@repeat
+            if (!checkLiveness) continue
             val alive = if (useRoot) RootHelper.isAliveAsRoot(childPid) else isProcessAlive(childPid)
             if (!alive) {
                 val logContent = readStartupLog(useRoot, workDir)
