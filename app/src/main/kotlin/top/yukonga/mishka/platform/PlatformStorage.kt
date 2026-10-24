@@ -84,6 +84,9 @@ object StorageKeys {
     // 仅额外强制重建 ROOT TUN 热点数据规则；DNS 与本机 TPROXY 在 attach 时始终重建。
     const val ROOT_ATTACH_FORCE_REAPPLY = "root_attach_force_reapply"
 
+    // ROOT 设置 · 系统 IPv6 开关（默认 false = 关闭系统 IPv6，见 service/SystemIpv6.kt）
+    const val ROOT_SYSTEM_IPV6 = "root_system_ipv6"
+
     // 上次启动时探测 xt_TPROXY 的结果（"true"/"false"/""），仅在 PROXY 或 ROOT TPROXY
     // 路径下有值。UI 读取此 key 决定是否显示「内核不支持 TPROXY，已降级」告警。
     // 空串表示「不适用」（BYPASS 模式 / 未启动过 PROXY）。

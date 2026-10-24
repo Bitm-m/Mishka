@@ -457,6 +457,14 @@
     <string name="root_tun_device_override_summary">Используется переопределение Mishka tun.device: %1$s</string>
     <string name="root_attach_force_reapply_title">Принудительно применять правила при переподключении</string>
     <string name="root_attach_force_reapply_summary">Диагностика: повторно применять правила iptables при каждом подключении приложения к работающему mihomo. Включайте только если правила раздачи пропадают после переподключения.</string>
+    <string name="root_section_system">Система</string>
+    <string name="root_system_ipv6_title">Системный IPv6</string>
+    <string name="root_system_ipv6_summary_off">Выкл. (по умолчанию): отключает IPv6 на не сотовых интерфейсах (Wi-Fi) и переводит протокол APN интернета на IPv4. IPv6-переключатели в активной конфигурации тоже выключаются. IMS-звонки и SMS не затрагиваются. Если прокси запущен, он автоматически перезапустится, чтобы применить изменения конфигурации.</string>
+    <string name="root_system_ipv6_summary_on">Вкл.: системный IPv6 восстановлен, протокол APN интернета возвращён, IPv6-переключатели в конфигурации включены. Если прокси запущен, он автоматически перезапустится, чтобы применить изменения конфигурации.</string>
+    <string name="root_system_ipv6_apn_line">Основная APN «%1$s»: протокол %2$s, роуминг %3$s</string>
+    <string name="root_system_ipv6_apn_none">Основная APN не найдена (можно вручную установить протокол APN на IPv4)</string>
+    <string name="root_system_ipv6_no_root">Требуется root-доступ</string>
+    <string name="root_system_ipv6_apply_failed">Не удалось применить настройку системного IPv6. Проверьте лог модуля.</string>
 
     <!-- Network Settings -->
     <string name="network_settings_title">Параметры переопределения</string>

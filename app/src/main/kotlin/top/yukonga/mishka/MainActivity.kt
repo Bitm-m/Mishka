@@ -43,6 +43,7 @@ import top.yukonga.mishka.platform.ProxyServiceController
 import top.yukonga.mishka.platform.StorageKeys
 import top.yukonga.mishka.platform.WifiPolicyController
 import top.yukonga.mishka.service.RootHelper
+import top.yukonga.mishka.service.SystemIpv6
 import top.yukonga.mishka.ui.theme.ThemeConfig
 import top.yukonga.mishka.ui.theme.readThemeConfig
 import top.yukonga.mishka.ui.theme.resolveIsDark
@@ -238,6 +239,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
             hasRootState.value = hasRoot
+            // ROOT 可用即按系统 IPv6 开关立即生效（默认关闭 → 立即禁用系统 IPv6）
+            if (hasRoot) SystemIpv6.onRootReady(this@MainActivity, storage)
         }
 
         if (storage.getString(StorageKeys.HIDE_TASK_CARD, "false") == "true") {

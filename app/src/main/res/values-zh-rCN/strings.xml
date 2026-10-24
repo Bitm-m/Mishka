@@ -457,6 +457,14 @@
     <string name="root_tun_device_override_summary">使用 Mishka 的 tun.device 覆写：%1$s</string>
     <string name="root_attach_force_reapply_title">重连时强制重建规则</string>
     <string name="root_attach_force_reapply_summary">诊断开关：每次应用重新连接到正在运行的 mihomo 时强制重建 iptables 规则。仅当重连后热点规则丢失时开启。</string>
+    <string name="root_section_system">系统</string>
+    <string name="root_system_ipv6_title">系统 IPv6</string>
+    <string name="root_system_ipv6_summary_off">已关闭（默认）：Wi-Fi 等非蜂窝网卡禁用 IPv6，上网 APN 协议改为仅 IPv4，配置文件中的 IPv6 开关同时关闭；不影响 IMS 高清通话与短信。代理运行中会自动重启以生效</string>
+    <string name="root_system_ipv6_summary_on">已开启：恢复系统 IPv6，还原上网 APN 协议，配置文件中的 IPv6 开关同时开启。代理运行中会自动重启以生效</string>
+    <string name="root_system_ipv6_apn_line">首选 APN「%1$s」：协议 %2$s，漫游 %3$s</string>
+    <string name="root_system_ipv6_apn_none">未读取到首选 APN（可手动把 APN 协议设为 IPv4，效果相同）</string>
+    <string name="root_system_ipv6_no_root">需要 ROOT 权限</string>
+    <string name="root_system_ipv6_apply_failed">系统 IPv6 设置失败，请查看模块日志</string>
 
     <!-- Network Settings -->
     <string name="network_settings_title">覆写设置</string>

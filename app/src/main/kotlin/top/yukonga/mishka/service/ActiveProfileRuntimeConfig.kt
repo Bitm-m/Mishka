@@ -64,6 +64,7 @@ internal object ActiveProfileRuntimeConfig {
         ebpfEnabled: Boolean,
         forceTunEnabled: Boolean = false,
         forceTunDisabled: Boolean = false,
+        systemIpv6: Boolean = false,
     ): ProfileModeConfigPreparation {
         val configFile = if (subscriptionId.isNullOrBlank()) {
             File(ConfigGenerator.getWorkDir(context), "config.yaml")
@@ -115,7 +116,7 @@ internal object ActiveProfileRuntimeConfig {
             doc = YamlPatch.setValue(doc, listOf("tun", "enable"), tunEnabledInSource)
         }
 
-        doc = ensureEbpfListeners(doc, ebpfEnabled)
+        doc = ensureEbpfListeners(doc, ebpfEnabled, systemIpv6)
         val updated = doc.dump()
         if (updated != source) ProfileFileOps.writeAtomically(configFile, updated)
 
@@ -173,7 +174,7 @@ internal object ActiveProfileRuntimeConfig {
      * Create/update eBPF role flags in the effective (possibly transformed and decrypted) listener
      * array. The full array is returned so mihomo's JSON override does not discard unrelated entries.
      */
-    fun patchRuntimeListeners(existing: JsonElement?, ebpfEnabled: Boolean): JsonArray {
+    fun patchRuntimeListeners(existing: JsonElement?, ebpfEnabled: Boolean, systemIpv6: Boolean = false): JsonArray {
         val entries = when (existing) {
             null, JsonNull -> mutableListOf()
             is JsonArray -> existing.toMutableList()
@@ -183,7 +184,7 @@ internal object ActiveProfileRuntimeConfig {
         var ebpfIndices = entries.indices.filter { isEbpfListener(entries[it]) }
         if (ebpfIndices.isEmpty()) {
             val name = uniqueJsonListenerName(entries)
-            entries += defaultEbpfListener(name)
+            entries += defaultEbpfListener(name, systemIpv6)
             ebpfIndices = listOf(entries.lastIndex)
         }
 
@@ -200,12 +201,12 @@ internal object ActiveProfileRuntimeConfig {
         return JsonArray(entries)
     }
 
-    private fun ensureEbpfListeners(input: YamlDoc, ebpfEnabled: Boolean): YamlDoc {
+    private fun ensureEbpfListeners(input: YamlDoc, ebpfEnabled: Boolean, systemIpv6: Boolean): YamlDoc {
         var doc = input
         var listeners = doc.get(listOf("listeners"))
         if (listeners == null || doc.isNullText(listeners)) {
             val name = uniqueYamlListenerName(doc)
-            doc = YamlPatch.setValue(doc, listOf("listeners"), listOf(defaultEbpfListenerMap(name)))
+            doc = YamlPatch.setValue(doc, listOf("listeners"), listOf(defaultEbpfListenerMap(name, systemIpv6)))
             listeners = doc.get(listOf("listeners"))
         } else if (listeners.kind != YamlNode.Kind.SEQ) {
             throw IllegalArgumentException("Active profile listeners field is not a list; refusing to overwrite it")
@@ -221,7 +222,7 @@ internal object ActiveProfileRuntimeConfig {
         }
         if (indices.isEmpty()) {
             val name = uniqueYamlListenerName(doc)
-            doc = YamlPatch.insertItem(doc, listOf("listeners"), listeners.items.size, defaultEbpfListenerMap(name))
+            doc = YamlPatch.insertItem(doc, listOf("listeners"), listeners.items.size, defaultEbpfListenerMap(name, systemIpv6))
             listeners = doc.get(listOf("listeners"))
                 ?: throw IllegalArgumentException("Unable to append eBPF listener")
             if (listeners.kind != YamlNode.Kind.SEQ) throw IllegalArgumentException("Active profile listeners field is not a list")
@@ -272,35 +273,35 @@ internal object ActiveProfileRuntimeConfig {
         return JsonObject(role)
     }
 
-    private fun defaultEbpfListenerMap(name: String): Map<String, Any?> = linkedMapOf(
+    private fun defaultEbpfListenerMap(name: String, ipv6: Boolean): Map<String, Any?> = linkedMapOf(
         "name" to name,
         "type" to "ebpf",
         "bypass-tun-direct" to false,
         "local" to linkedMapOf<String, Any?>(
             "enable" to false,
-            "ipv6" to false,
+            "ipv6" to ipv6,
             "bypass-private-address" to false,
         ),
         "shared" to linkedMapOf<String, Any?>(
             "enable" to false,
-            "ipv6" to false,
+            "ipv6" to ipv6,
             "bypass-private-address" to false,
             "interface" to listOf("wlan2", "br-lan", "br0"),
         ),
     )
 
-    private fun defaultEbpfListener(name: String): JsonObject = buildJsonObject {
+    private fun defaultEbpfListener(name: String, ipv6: Boolean): JsonObject = buildJsonObject {
         put("name", name)
         put("type", "ebpf")
         put("bypass-tun-direct", false)
         put("local", buildJsonObject {
             put("enable", false)
-            put("ipv6", false)
+            put("ipv6", ipv6)
             put("bypass-private-address", false)
         })
         put("shared", buildJsonObject {
             put("enable", false)
-            put("ipv6", false)
+            put("ipv6", ipv6)
             put("bypass-private-address", false)
             put("interface", buildJsonArray {
                 add(JsonPrimitive("wlan2"))

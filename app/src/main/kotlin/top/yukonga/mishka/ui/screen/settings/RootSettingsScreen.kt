@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -28,12 +29,16 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.mishka.R
 import top.yukonga.mishka.platform.PlatformStorage
+import top.yukonga.mishka.platform.ProxyServiceController
 import top.yukonga.mishka.platform.StorageKeys
+import top.yukonga.mishka.platform.showToast
 import top.yukonga.mishka.domain.model.TunOverride
 import top.yukonga.mishka.service.ConfigGenerator
+import top.yukonga.mishka.service.SystemIpv6
 import top.yukonga.mishka.ui.component.AdaptiveTopAppBar
 import top.yukonga.mishka.ui.component.CardItem
 import top.yukonga.mishka.ui.component.RestartRequiredHint
@@ -73,6 +78,7 @@ import top.yukonga.miuix.kmp.window.WindowDialog
  * - TUN 设备名称（mihomo 创建的 TUN 接口名，代理运行时不可改）
  * - 热点客户端流量处置（绕过代理 / 走代理）
  * - 热点接口名列表（手填 + 扫描辅助）
+ * - 系统：系统 IPv6 开关（默认关闭，实时显示首选上网 APN 的 IPv6 协议状态）
  */
 @Composable
 fun RootSettingsScreen(
@@ -86,6 +92,7 @@ fun RootSettingsScreen(
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     val context = LocalContext.current
+    val serviceController = remember(context) { ProxyServiceController(context) }
     val activeProfileId = storage.getString(StorageKeys.ACTIVE_PROFILE_UUID, "").takeIf { it.isNotEmpty() }
     var profileTunConfig by remember(activeProfileId) { mutableStateOf<TunOverride?>(null) }
     var profileTunConfigLoaded by remember(activeProfileId) { mutableStateOf(activeProfileId == null) }
@@ -141,6 +148,41 @@ fun RootSettingsScreen(
 
     var allowIpv6 by remember {
         mutableStateOf(storage.getString(StorageKeys.VPN_ALLOW_IPV6, "false") == "true")
+    }
+
+    // ---- 系统 IPv6（mihomo_box 逻辑移植，见 service/SystemIpv6.kt）----
+    val hasRoot = storage.getString(StorageKeys.HAS_ROOT, "false") == "true"
+    val systemScope = rememberCoroutineScope()
+    var systemIpv6 by remember { mutableStateOf(SystemIpv6.isEnabled(storage)) }
+    var apnRows by remember { mutableStateOf<List<SystemIpv6.ApnRow>?>(null) }
+    val ipv6OffText = stringResource(R.string.root_system_ipv6_summary_off)
+    val ipv6OnText = stringResource(R.string.root_system_ipv6_summary_on)
+    val ipv6NoRootText = stringResource(R.string.root_system_ipv6_no_root)
+    val ipv6NoApnText = stringResource(R.string.root_system_ipv6_apn_none)
+    val ipv6ApplyFailedText = stringResource(R.string.root_system_ipv6_apply_failed)
+    // 打开设置页时读取一次首选 APN（root 查询）；开关切换成功后再读一次。离开页面不再查询。
+    LaunchedEffect(hasRoot) {
+        if (!hasRoot) return@LaunchedEffect
+        apnRows = withContext(Dispatchers.IO) { SystemIpv6.readPreferApn(context) }
+    }
+    val preferredApn = apnRows?.firstOrNull { !it.isIms }
+    val apnLine: String? = when {
+        apnRows == null -> null
+        preferredApn == null -> ipv6NoApnText
+        else -> stringResource(
+            R.string.root_system_ipv6_apn_line,
+            preferredApn.apn.ifBlank { "-" },
+            SystemIpv6.protocolLabel(preferredApn.protocol),
+            SystemIpv6.protocolLabel(preferredApn.roaming),
+        )
+    }
+    val systemIpv6Summary = if (!hasRoot) {
+        ipv6NoRootText
+    } else {
+        listOfNotNull(
+            if (systemIpv6) ipv6OnText else ipv6OffText,
+            apnLine,
+        ).joinToString("\n")
     }
 
     var forceReapply by remember {
@@ -324,6 +366,35 @@ fun RootSettingsScreen(
                             onCheckedChange = {
                                 forceReapply = it
                                 storage.putString(StorageKeys.ROOT_ATTACH_FORCE_REAPPLY, it.toString())
+                            },
+                        )
+                    },
+                ),
+            )
+            item { SmallTitle(text = stringResource(R.string.root_section_system)) }
+            groupedCardItems(
+                keyPrefix = "root_system",
+                outerBottomPadding = 12.dp,
+                items = listOf(
+                    CardItem("systemIpv6") {
+                        SwitchPreference(
+                            title = stringResource(R.string.root_system_ipv6_title),
+                            summary = systemIpv6Summary,
+                            checked = systemIpv6,
+                            onCheckedChange = { value ->
+                                // 先在 root 下真正执行，成功后才记录开关状态
+                                systemScope.launch {
+                                    val ok = withContext(Dispatchers.IO) { SystemIpv6.apply(context, value) }
+                                    if (ok) {
+                                        systemIpv6 = value
+                                        storage.putString(StorageKeys.ROOT_SYSTEM_IPV6, value.toString())
+                                        apnRows = withContext(Dispatchers.IO) { SystemIpv6.readPreferApn(context) }
+                                        // 配置已改写：代理在运行中则自动重启以生效（未运行时 restartWhenReady 不做任何事）
+                                        activeProfileId?.let { serviceController.restartWhenReady(it) }
+                                    } else {
+                                        showToast(ipv6ApplyFailedText)
+                                    }
+                                }
                             },
                         )
                     },

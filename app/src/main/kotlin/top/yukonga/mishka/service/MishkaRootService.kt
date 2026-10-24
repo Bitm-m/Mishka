@@ -429,6 +429,8 @@ class MishkaRootService : Service() {
                     forceTunEnabled = submode == Submode.Tun,
                     // TPROXY / eBPF 两个子模式都不建 sing-tun，把活动配置里的 tun 一并置 false
                     forceTunDisabled = submode == Submode.Tproxy || submode == Submode.Ebpf,
+                    // 默认 eBPF 监听器的 IPv6 跟随系统 IPv6 开关
+                    systemIpv6 = SystemIpv6.isEnabled(storage),
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to prepare active profile mode config", e)
@@ -442,6 +444,9 @@ class MishkaRootService : Service() {
                 stopSelf()
                 return@launch
             }
+
+            // 系统 IPv6 开关联动活动订阅的 IPv6 开关：必须在复制到 runtime/ 之前写入，mihomo 启动时才生效
+            SystemIpv6.syncConfigFile(this@MishkaRootService, SystemIpv6.isEnabled(storage), subscriptionId)
 
             // 3.5 准备 runtime/{uuid}/ 沙箱：从 imported/{uuid}/ 复制，mihomo 在此以 root 写入
             //     不污染 imported/，保证更新/删除始终在 app UID 下工作
@@ -528,7 +533,11 @@ class MishkaRootService : Service() {
                 appPort = userOverride.tproxyPort,
             )
             val effectiveProfileListeners = profileParameters?.let {
-                ActiveProfileRuntimeConfig.patchRuntimeListeners(it.listeners, ebpfEnabled = submode == Submode.Ebpf)
+                ActiveProfileRuntimeConfig.patchRuntimeListeners(
+                    it.listeners,
+                    ebpfEnabled = submode == Submode.Ebpf,
+                    systemIpv6 = SystemIpv6.isEnabled(storage),
+                )
             }
             val useProfileTunDefaults = profileModeConfig.tunDefaultsInserted || profileParameters?.hasTun == false
             val profileSecret = profileParameters?.secret
