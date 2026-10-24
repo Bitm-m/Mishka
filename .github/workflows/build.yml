@@ -46,17 +46,8 @@ jobs:
       - name: Prepare custom mihomo kernel
         run: |
           set -euo pipefail
-          BASE_COMMIT="$(sed -n 's/^base_commit=//p' patches/mihomo/BASELINE.txt | head -1)"
           rm -rf mihomo
-          git clone --single-branch --branch Alpha https://github.com/jieluojun/mihomo.git mihomo
-          if [ -n "$BASE_COMMIT" ]; then
-            if ! git -C mihomo cat-file -e "${BASE_COMMIT}^{commit}" 2>/dev/null; then
-              git -C mihomo fetch --quiet origin "+${BASE_COMMIT}:refs/mishka-custom/base" || true
-            fi
-            if git -C mihomo cat-file -e "${BASE_COMMIT}^{commit}" 2>/dev/null; then
-              git -C mihomo checkout -q "$BASE_COMMIT"
-            fi
-          fi
+          git clone --depth=1 --single-branch --branch Alpha https://github.com/jieluojun/mihomo.git mihomo
           for p in "$PWD"/patches/mihomo/[0-9]*.patch; do
             echo "Applying $(basename "$p") ..."
             git -C mihomo apply "$p" || git -C mihomo apply --3way "$p"
@@ -76,7 +67,7 @@ jobs:
           } >> .git/info/exclude
           git config submodule.mihomo.ignore all
           SHA="$(git -C mihomo rev-parse --short=8 HEAD)"
-          echo "MIHOMO_VERSION=alpha-smart-${SHA}-zero" >> "$GITHUB_ENV"
+          echo "MIHOMO_VERSION=alpha-smart-${SHA}-with-at" >> "$GITHUB_ENV"
 
       - name: Decode Android signing key
         env:

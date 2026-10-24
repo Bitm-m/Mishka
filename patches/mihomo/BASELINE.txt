@@ -1,8 +1,8 @@
 # mihomo 内核补丁基线（由 YuKongA/Mishka 移植）
 kernel_repo=https://github.com/jieluojun/mihomo
 branch=Alpha
-base_commit=289ceb5ddbdef3ae8d1cb03af88cf12b658947ee
-patched_tree=1c414fea480c7adb4126a8d400e21b71ddb266cc
+base_commit=22290fb0ab55d156b7f0b0d844f8754ff5668488
+patched_tree=b1226da62b36a499d84f0e1faf8a7c25f4f5dc94
 # --- 补丁文件 sha256 ---
 patch 59e98733b863c5fc60e02df4bb23173803389f20697a1fdeff7213709ab3d71c 0001-config-override-json.patch
 patch b9692040eaa9c304a8a4eb3fc2f232cfcbfe6d84d77179d064834db9d9ba71d3 0002-sing-tun-mishka-build-tag.patch
