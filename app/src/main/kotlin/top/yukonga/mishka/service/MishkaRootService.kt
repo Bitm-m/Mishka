@@ -421,6 +421,8 @@ class MishkaRootService : Service() {
                     subscriptionId,
                     ebpfEnabled = submode == Submode.Ebpf,
                     forceTunEnabled = submode == Submode.Tun,
+                    // TPROXY / eBPF 两个子模式都不建 sing-tun，把活动配置里的 tun 一并置 false
+                    forceTunDisabled = submode == Submode.Tproxy || submode == Submode.Ebpf,
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to prepare active profile mode config", e)
