@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,14 +21,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import top.yukonga.mishka.R
 import top.yukonga.mishka.platform.PlatformStorage
 import top.yukonga.mishka.platform.StorageKeys
+import top.yukonga.mishka.domain.model.TunOverride
+import top.yukonga.mishka.service.ConfigGenerator
 import top.yukonga.mishka.ui.component.AdaptiveTopAppBar
 import top.yukonga.mishka.ui.component.CardItem
 import top.yukonga.mishka.ui.component.RestartRequiredHint
@@ -37,6 +43,7 @@ import top.yukonga.mishka.ui.component.blur.rememberBlurBackdrop
 import top.yukonga.mishka.ui.component.groupedCardItems
 import top.yukonga.mishka.ui.component.tetherInterfaceSummary
 import top.yukonga.mishka.ui.util.horizontalCutoutPadding
+import top.yukonga.mishka.viewmodel.SubscriptionViewModel
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
@@ -71,18 +78,65 @@ import top.yukonga.miuix.kmp.window.WindowDialog
 fun RootSettingsScreen(
     storage: PlatformStorage,
     isProxyRunning: Boolean,
+    userTunDeviceOverride: String? = null,
+    userTunOverride: TunOverride? = null,
+    subscriptionViewModel: SubscriptionViewModel? = null,
+    onJumboMtuChange: (Boolean) -> Unit = {},
     onBack: () -> Unit = {},
 ) {
     val scrollBehavior = MiuixScrollBehavior()
+    val context = LocalContext.current
+    val activeProfileId = storage.getString(StorageKeys.ACTIVE_PROFILE_UUID, "").takeIf { it.isNotEmpty() }
+    var profileTunConfig by remember(activeProfileId) { mutableStateOf<TunOverride?>(null) }
+    var profileTunConfigLoaded by remember(activeProfileId) { mutableStateOf(activeProfileId == null) }
+    var preferUserTunOverrides by remember(activeProfileId) { mutableStateOf(false) }
+    LaunchedEffect(activeProfileId, subscriptionViewModel) {
+        profileTunConfigLoaded = false
+        val (config, preferAppValues) = withContext(Dispatchers.IO) {
+            val prefer = activeProfileId?.let { id ->
+                subscriptionViewModel?.shouldPreferUserTunOverrides(id)
+            } == true
+            val runtimeValue = activeProfileId?.let { id ->
+                subscriptionViewModel?.readProfileTunConfig(id)
+            }
+            (runtimeValue ?: ConfigGenerator.readSubscriptionTunConfig(context, activeProfileId)) to prefer
+        }
+        profileTunConfig = config
+        preferUserTunOverrides = preferAppValues
+        profileTunConfigLoaded = true
+    }
 
+    val profileTunDevice = profileTunConfig?.device?.trim()?.takeIf { it.isNotEmpty() }
     var tunDevice by remember {
         mutableStateOf(storage.getString(StorageKeys.ROOT_TUN_DEVICE, DEFAULT_TUN_DEVICE))
     }
+    val appTunDeviceOverride = userTunDeviceOverride?.trim()?.takeIf { it.isNotEmpty() }
+    val effectiveTunDevice = profileTunDevice ?: appTunDeviceOverride ?: tunDevice
+    val canEditTunDevice = !isProxyRunning && profileTunConfigLoaded && profileTunDevice == null && appTunDeviceOverride == null
     var showTunDeviceDialog by remember { mutableStateOf(false) }
     val tunDeviceTextState = rememberTextFieldState()
 
-    var jumboMtu by remember {
+    var jumboMtu by remember(activeProfileId) {
         mutableStateOf(storage.getString(StorageKeys.ROOT_TUN_JUMBO_MTU, "true") == "true")
+    }
+    LaunchedEffect(activeProfileId, profileTunConfig, profileTunConfigLoaded, preferUserTunOverrides, userTunOverride) {
+        if (!profileTunConfigLoaded) return@LaunchedEffect
+        val fallback = storage.getString(StorageKeys.ROOT_TUN_JUMBO_MTU, "true") == "true"
+        val profileMtu = if (preferUserTunOverrides) {
+            userTunOverride?.mtu ?: profileTunConfig?.mtu
+        } else {
+            profileTunConfig?.mtu ?: userTunOverride?.mtu
+        }
+        val profileGso = if (preferUserTunOverrides) {
+            userTunOverride?.gso ?: profileTunConfig?.gso
+        } else {
+            profileTunConfig?.gso ?: userTunOverride?.gso
+        }
+        jumboMtu = if (profileMtu != null || profileGso != null) {
+            (profileMtu?.let { it > 1500 } ?: fallback) && (profileGso ?: fallback)
+        } else {
+            fallback
+        }
     }
 
     var allowIpv6 by remember {
@@ -102,9 +156,11 @@ fun RootSettingsScreen(
     }
     var showTetherDialog by remember { mutableStateOf(false) }
 
-    // 读一次 submode：TPROXY 下隐藏 tether mode 下拉，显示说明文案
+    // 读一次 submode：TPROXY / EBPF 下隐藏 tether mode 下拉，显示说明文案
     // （用户改 TUN_MODE 必须先停代理，不需要热更新）
-    val isTproxy = storage.getString(StorageKeys.TUN_MODE, "vpn") == "root_tproxy"
+    val tunModeValue = storage.getString(StorageKeys.TUN_MODE, "vpn")
+    val isTproxy = tunModeValue == "root_tproxy"
+    val isEbpf = tunModeValue == "root_ebpf"
 
     // xt_TPROXY 内核能力探测结果，仅在 TPROXY submode 或 PROXY 热点模式下显示告警
     val tproxyCapable = storage.getString(StorageKeys.ROOT_TPROXY_KERNEL_CAPABLE, "")
@@ -159,12 +215,16 @@ fun RootSettingsScreen(
                     CardItem("tunDevice") {
                         ArrowPreference(
                             title = stringResource(R.string.settings_tun_device),
-                            summary = tunDevice,
+                            summary = profileTunDevice?.let {
+                                stringResource(R.string.root_tun_device_profile_summary, it)
+                            } ?: appTunDeviceOverride?.let {
+                                stringResource(R.string.root_tun_device_override_summary, it)
+                            } ?: effectiveTunDevice,
                             onClick = {
-                                tunDeviceTextState.edit { replace(0, length, tunDevice) }
+                                tunDeviceTextState.edit { replace(0, length, effectiveTunDevice) }
                                 showTunDeviceDialog = true
                             },
-                            enabled = !isProxyRunning,
+                            enabled = canEditTunDevice,
                         )
                     },
                     CardItem("jumboMtu") {
@@ -175,6 +235,7 @@ fun RootSettingsScreen(
                             onCheckedChange = {
                                 jumboMtu = it
                                 storage.putString(StorageKeys.ROOT_TUN_JUMBO_MTU, it.toString())
+                                onJumboMtuChange(it)
                             },
                         )
                     },
@@ -217,10 +278,17 @@ fun RootSettingsScreen(
                 outerBottomPadding = 12.dp,
                 items = listOf(
                     CardItem("mode") {
-                        if (isTproxy) {
-                            // TPROXY 模式：整条链路都由 iptables 透明代理，不需要 BYPASS/PROXY 切换
+                        if (isTproxy || isEbpf) {
+                            // TPROXY：整条链路由 iptables 透明代理；EBPF：热点劫持同样不归 App 管，
+                            // 两种模式都不需要 BYPASS/PROXY 切换
                             Text(
-                                text = stringResource(R.string.root_tproxy_tether_note),
+                                text = stringResource(
+                                    if (isTproxy) {
+                                        R.string.root_tproxy_tether_note
+                                    } else {
+                                        R.string.root_ebpf_tether_note
+                                    }
+                                ),
                                 fontSize = 13.sp,
                                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),

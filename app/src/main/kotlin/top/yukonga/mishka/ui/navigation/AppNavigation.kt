@@ -338,6 +338,9 @@ fun AppNavigation(
                         onBack = { navigator.pop() },
                         onSaved = { navigator.pop() },
                         onNavigateOverrides = { navigator.push(Route.SubscriptionOverrides(route.uuid)) },
+                        onNavigateVisualConfig = { relativePath ->
+                            navigator.push(Route.FileManagerEditor(route.uuid, relativePath, showConfigForm = true))
+                        },
                     )
                 }
             }
@@ -390,6 +393,8 @@ fun AppNavigation(
                 providerViewModel?.let {
                     ProviderScreen(
                         viewModel = it,
+                        homeViewModel = homeViewModel,
+                        subscriptionViewModel = subscriptionViewModel,
                         onBack = { navigator.pop() },
                     )
                 }
@@ -425,6 +430,10 @@ fun AppNavigation(
                     RootSettingsScreen(
                         storage = it,
                         isProxyRunning = homeState?.isRunning == true || homeState?.isStarting == true,
+                        userTunDeviceOverride = homeViewModel?.rootTunDeviceOverride,
+                        userTunOverride = homeViewModel?.rootTunOverride,
+                        subscriptionViewModel = subscriptionViewModel,
+                        onJumboMtuChange = { homeViewModel?.setRootTunJumboMtu(it) },
                         onBack = { navigator.pop() },
                     )
                 }
@@ -520,6 +529,7 @@ fun AppNavigation(
                     uuid = route.uuid,
                     relativePath = route.relativePath,
                     subscriptionViewModel = subscriptionViewModel,
+                    showConfigFormOnOpen = route.showConfigForm,
                     onBack = { navigator.pop() },
                 )
             }

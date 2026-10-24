@@ -2,27 +2,40 @@ package top.yukonga.mishka.viewmodel
 
 import android.content.Context
 import androidx.annotation.StringRes
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import top.yukonga.mishka.R
+import top.yukonga.mishka.data.bridge.MishkaCoreBridge
+import top.yukonga.mishka.data.store.ProfileTransformWriter
 import top.yukonga.mishka.data.repository.ConfigValidationException
 import top.yukonga.mishka.data.repository.ImportError
 import top.yukonga.mishka.data.repository.ImportProgress
 import top.yukonga.mishka.data.repository.ProfileProcessor
 import top.yukonga.mishka.domain.model.ProfileType
 import top.yukonga.mishka.domain.model.Subscription
+import top.yukonga.mishka.domain.model.TunOverride
 import top.yukonga.mishka.domain.repository.SubscriptionRepository
 import top.yukonga.mishka.platform.ProfileFileManager
 import top.yukonga.mishka.platform.ProxyServiceController
+import top.yukonga.mishka.service.ConfigGenerator
+import top.yukonga.mishka.service.ProfileFileOps
 import top.yukonga.mishka.util.describe
 
 /**
@@ -54,11 +67,23 @@ data class UpdateAllProgress(
     val currentStep: ImportProgress? = null,
 )
 
+@Immutable
+data class ProxyProviderFileSource(
+    val type: String,
+    val path: String,
+    val format: String? = null,
+    /** The app-owned source directory where uploads and edits must persist. */
+    val profileWorkDir: String,
+    /** The directory currently used by mihomo; ROOT profiles use runtime/{uuid}. */
+    val runtimeWorkDir: String,
+)
+
 class SubscriptionViewModel(
     private val repository: SubscriptionRepository,
     val fileManager: ProfileFileManager,
     private val processor: ProfileProcessor,
     private val serviceController: ProxyServiceController,
+    private val transformWriter: ProfileTransformWriter,
     private val context: Context,
 ) : ViewModel() {
 
@@ -89,6 +114,121 @@ class SubscriptionViewModel(
 
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = "")
+    }
+
+    /** Read the active profile's effective tun mapping, including age decryption and transforms. */
+    suspend fun readProfileTunConfig(subscriptionId: String): TunOverride? = withContext(Dispatchers.IO) {
+        val subscription = repository.subscriptions.value.firstOrNull { it.id == subscriptionId }
+            ?: repository.getActive()?.takeIf { it.id == subscriptionId }
+            ?: return@withContext null
+        runCatching {
+            val transformPath = transformWriter.write(subscription, ProfileTransformWriter.RUNTIME_PATH)
+            val runtime = MishkaCoreBridge.readRuntimeConfigValues(
+                ProfileFileOps.getSubscriptionDir(context, subscriptionId).absolutePath,
+                transformPath,
+                subscription.ageSecretKey,
+            )
+            val decoded = runtime.tun?.let { element ->
+                runCatching {
+                    Json { ignoreUnknownKeys = true }.decodeFromJsonElement<TunOverride>(element)
+                }.getOrNull()
+            }
+            decoded?.copy(device = decoded.device ?: runtime.tunDevice)
+                ?: runtime.tunDevice?.let { TunOverride(device = it) }
+        }.getOrNull()
+    }
+
+    /** Read only the effective device name when a caller does not need the full tun mapping. */
+    suspend fun readProfileTunDevice(subscriptionId: String): String? =
+        readProfileTunConfig(subscriptionId)?.device?.trim()?.takeIf { it.isNotEmpty() }
+
+    /**
+     * Resolve a file proxy provider from the live effective profile rather than guessing its path
+     * from a form default. Native inspection follows the same age-decryption and transform chain as
+     * mihomo. The returned profile directory is always app-owned; ROOT's runtime directory is
+     * returned separately so file operations can explicitly mirror changes into runtime/{uuid}.
+     */
+    suspend fun readProxyProviderFileSource(
+        name: String,
+        subscriptionId: String?,
+        useRootRuntime: Boolean,
+    ): ProxyProviderFileSource? = withContext(Dispatchers.IO) {
+        val subscription = if (subscriptionId.isNullOrBlank()) {
+            repository.subscriptions.value.firstOrNull { it.isActive } ?: repository.getActive()
+        } else {
+            repository.subscriptions.value.firstOrNull { it.id == subscriptionId }
+                ?: repository.getActive()?.takeIf { it.id == subscriptionId }
+                ?: return@withContext null
+        }
+        val profileWorkDir = if (subscription != null) {
+            ProfileFileOps.getSubscriptionDir(context, subscription.id)
+        } else {
+            ConfigGenerator.getWorkDir(context)
+        }
+        val runtimeWorkDir = if (useRootRuntime && subscription != null) {
+            ProfileFileOps.getRuntimeDir(context, subscription.id)
+        } else {
+            profileWorkDir
+        }
+        // While ROOT is running, inspect the copied config that mihomo actually started from. If
+        // runtime/ has not been prepared yet, use imported/ so a stopped service can still resolve.
+        val configWorkDir = if (useRootRuntime && subscription != null && File(runtimeWorkDir, "config.yaml").isFile) {
+            runtimeWorkDir
+        } else {
+            profileWorkDir
+        }
+        val transformPath = try {
+            transformWriter.write(subscription, ProfileTransformWriter.RUNTIME_PATH)
+        } catch (_: Exception) {
+            return@withContext null
+        }
+        val runtime = try {
+            MishkaCoreBridge.readRuntimeConfigValues(
+                configWorkDir.absolutePath,
+                transformPath,
+                subscription?.ageSecretKey.orEmpty(),
+            )
+        } catch (_: Exception) {
+            return@withContext null
+        }
+        val provider = runCatching { runtime.proxyProviders?.jsonObject?.get(name)?.jsonObject }.getOrNull()
+            ?: return@withContext null
+        val type = runCatching { provider["type"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: return@withContext null
+        if (!type.equals("file", ignoreCase = true)) return@withContext null
+        val path = runCatching { provider["path"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: return@withContext null
+        val format = runCatching { provider["format"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        ProxyProviderFileSource(
+            type = type.lowercase(),
+            path = path,
+            format = format,
+            profileWorkDir = profileWorkDir.absolutePath,
+            runtimeWorkDir = runtimeWorkDir.absolutePath,
+        )
+    }
+
+    /** App tun edits take priority only when the source cannot be edited or a transform may rewrite it. */
+    suspend fun shouldPreferUserTunOverrides(subscriptionId: String): Boolean = withContext(Dispatchers.IO) {
+        val subscription = repository.subscriptions.value.firstOrNull { it.id == subscriptionId }
+            ?: repository.getActive()?.takeIf { it.id == subscriptionId }
+            ?: return@withContext false
+        val configFile = ProfileFileOps.getSubscriptionConfigFile(context, subscriptionId)
+        val encrypted = runCatching {
+            configFile.isFile && configFile.bufferedReader(Charsets.UTF_8).use { reader ->
+                reader.readLine()?.trim()?.startsWith("-----BEGIN AGE ENCRYPTED FILE-----") == true
+            }
+        }.getOrDefault(false)
+        val transformed = runCatching {
+            transformWriter.write(subscription, ProfileTransformWriter.RUNTIME_PATH) != null
+        }.getOrDefault(subscription.overrideIds.isNotEmpty())
+        encrypted || transformed
     }
 
     /**

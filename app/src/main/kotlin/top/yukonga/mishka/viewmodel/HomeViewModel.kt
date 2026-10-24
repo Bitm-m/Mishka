@@ -1,11 +1,13 @@
 package top.yukonga.mishka.viewmodel
 
+import android.content.Context
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -17,7 +19,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import top.yukonga.mishka.R
 import top.yukonga.mishka.data.api.MihomoConnectionManager
 import top.yukonga.mishka.data.api.RuleLatencyTester
 import top.yukonga.mishka.data.repository.OverrideJsonStore
@@ -34,6 +39,7 @@ import top.yukonga.mishka.platform.ProxyServiceController
 import top.yukonga.mishka.platform.ProxyState
 import top.yukonga.mishka.platform.TunMode
 import top.yukonga.mishka.platform.showToast
+import top.yukonga.mishka.service.ActiveProfileRuntimeConfig
 import top.yukonga.mishka.util.FormatUtils
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -143,6 +149,7 @@ class HomeViewModel(
     private val connectionManager: MihomoConnectionManager,
     private val latencyTester: RuleLatencyTester,
     private val systemInfo: PlatformSystemInfo,
+    private val context: Context,
     private val getActiveSubscriptionId: () -> String? = { null },
     private val activeSubscription: StateFlow<Subscription?> = MutableStateFlow(null).asStateFlow(),
     private val onLiveProviderInfo: (subscriptionId: String?, info: SubscriptionInfo?) -> Unit = { _, _ -> },
@@ -191,6 +198,8 @@ class HomeViewModel(
     private var startTime: Long = 0
     private var uptimeJob: Job? = null
     private var mihomoPid: Int = -1
+    private val profileTunWriteMutex = Mutex()
+    private data class TunConfigUpdateOutcome(val encrypted: Boolean = false, val failed: Boolean = false)
 
     /** UI 是否在前台，由 MainActivity 的 onStart/onStop 驱动，门控各轮询循环 */
     private val uiVisible = MutableStateFlow(true)
@@ -708,14 +717,79 @@ class HomeViewModel(
         serviceController.restartWhenReady(getActiveSubscriptionId())
     }
 
+    /** Current app-level TUN device override, used by ROOT settings to show the effective source. */
+    val rootTunDeviceOverride: String?
+        get() = overrideStore.load().tun?.device?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** App-managed tun fields are the writable fallback for encrypted/transformed profiles. */
+    val rootTunOverride: TunOverride?
+        get() = overrideStore.load().tun
+
     fun switchTunStack(stack: String) {
-        // TPROXY 模式 tun.enable=false，切 stack 无意义（且不应触发 restart）
-        if (_uiState.value.tunMode == TunMode.RootTproxy) return
+        // TPROXY / EBPF 模式 tun.enable=false，切 stack 无意义（且不应触发 restart）
+        if (_uiState.value.tunMode == TunMode.RootTproxy ||
+            _uiState.value.tunMode == TunMode.RootEbpf ||
+            stack.isBlank()
+        ) {
+            return
+        }
+        val subscriptionId = getActiveSubscriptionId()
+        viewModelScope.launch {
+            val outcome = persistActiveTunValues(subscriptionId, mapOf("stack" to stack))
+            if (outcome.failed) return@launch
+            if (outcome.encrypted) showToast(context.getString(R.string.tun_profile_encrypted_override))
+            _uiState.update { it.copy(tunStack = stack) }
+            serviceController.restart(subscriptionId)
+        }
+    }
+
+    /** Persist the Root TUN MTU/GSO switch into active-profile tun fields (source or app fallback). */
+    fun setRootTunJumboMtu(enabled: Boolean) {
+        val values = linkedMapOf<String, Any?>(
+            "mtu" to if (enabled) 9000 else 1500,
+            "gso" to enabled,
+            "gso-max-size" to if (enabled) 65535 else null,
+        )
+        val subscriptionId = getActiveSubscriptionId()
+        viewModelScope.launch {
+            val outcome = persistActiveTunValues(subscriptionId, values)
+            if (outcome.encrypted) showToast(context.getString(R.string.tun_profile_encrypted_override))
+        }
+    }
+
+    /**
+     * Update comment-preserving profile YAML when possible. Age ciphertext is immutable, while
+     * selected transforms may rewrite the edited fields; in either case the app override is kept
+     * as the explicit user edit so the next runtime uses the requested value.
+     */
+    private suspend fun persistActiveTunValues(
+        subscriptionId: String?,
+        values: Map<String, Any?>,
+    ): TunConfigUpdateOutcome = profileTunWriteMutex.withLock {
+        val profile = activeSubscription.value?.takeIf { it.id == subscriptionId }
+        val hasTransform = profile?.overrideIds?.isNotEmpty() == true
+        val result = try {
+            withContext(Dispatchers.IO) {
+                ActiveProfileRuntimeConfig.updateTunValues(context, subscriptionId, values)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            showToast(context.getString(R.string.error_save_failed, e.message ?: e.javaClass.simpleName))
+            return@withLock TunConfigUpdateOutcome(failed = true)
+        }
+        val keepAppOverride = result.encrypted || hasTransform
         val current = overrideStore.load()
-        val nextTun = (current.tun ?: TunOverride()).copy(stack = stack)
-        overrideStore.save(current.copy(tun = nextTun))
-        _uiState.value = _uiState.value.copy(tunStack = stack)
-        serviceController.restart(getActiveSubscriptionId())
+        var tun = current.tun ?: TunOverride()
+        if ("stack" in values) tun = tun.copy(stack = if (keepAppOverride) values["stack"] as? String else null)
+        if ("mtu" in values) tun = tun.copy(mtu = if (keepAppOverride) values["mtu"] as? Int else null)
+        if ("gso" in values) tun = tun.copy(gso = if (keepAppOverride) values["gso"] as? Boolean else null)
+        if ("gso-max-size" in values) {
+            tun = tun.copy(gsoMaxSize = if (keepAppOverride) values["gso-max-size"] as? Int else null)
+        }
+        overrideStore.save(current.copy(tun = tun.takeIf { it != TunOverride() }))
+
+        TunConfigUpdateOutcome(encrypted = result.encrypted)
     }
 
     fun reloadConfig() {

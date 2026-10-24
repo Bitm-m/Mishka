@@ -31,6 +31,8 @@ import top.yukonga.mishka.platform.ProfileFileManager
 import top.yukonga.mishka.platform.showToast
 import top.yukonga.mishka.ui.component.blur.BlurredBar
 import top.yukonga.mishka.ui.component.blur.rememberBlurBackdrop
+import top.yukonga.mishka.custom.anchor.MishkaAnchorPanel
+import top.yukonga.mishka.custom.forms.MishkaConfigFormPanel
 import top.yukonga.mishka.ui.theme.LocalAppDarkMode
 import top.yukonga.mishka.ui.util.horizontalCutoutPadding
 import top.yukonga.mishka.viewmodel.SubscriptionViewModel
@@ -44,6 +46,8 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.extended.Link
+import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.scripta.editor.CodeEditor
@@ -56,6 +60,7 @@ fun FileManagerEditorScreen(
     uuid: String,
     relativePath: String,
     subscriptionViewModel: SubscriptionViewModel? = null,
+    showConfigFormOnOpen: Boolean = false,
     onBack: () -> Unit = {},
 ) {
     val fileManager = subscriptionViewModel?.fileManager
@@ -63,12 +68,19 @@ fun FileManagerEditorScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var isSaving by remember { mutableStateOf(false) }
+    var showAnchorPanel by remember { mutableStateOf(false) }
+    var showFormPanel by remember { mutableStateOf(false) }
+    var contentLoaded by remember(uuid, relativePath) { mutableStateOf(false) }
 
     LaunchedEffect(uuid, relativePath, fileManager) {
         val content = withContext(Dispatchers.IO) {
             fileManager?.readImportedFile(uuid, relativePath)
         } ?: ""
         controller.setDocument(content)
+        contentLoaded = true
+    }
+    LaunchedEffect(contentLoaded, showConfigFormOnOpen) {
+        if (contentLoaded && showConfigFormOnOpen) showFormPanel = true
     }
 
     val backdrop = rememberBlurBackdrop()
@@ -96,6 +108,24 @@ fun FileManagerEditorScreen(
                         }
                     },
                     actions = {
+                        // [mishka-custom] YAML 配置的锚点面板入口：&定义 / *引用 可视化编辑
+                        if (isYamlPath(relativePath)) {
+                            IconButton(onClick = { showFormPanel = true }) {
+                                Icon(
+                                    imageVector = MiuixIcons.Tune,
+                                    contentDescription = stringResource(R.string.subscription_visual_config),
+                                    tint = MiuixTheme.colorScheme.onSurface,
+                                )
+                            }
+                            // 锚点面板入口保持在原位；用户明确要求不迁移锚点工具。
+                            IconButton(onClick = { showAnchorPanel = true }) {
+                                Icon(
+                                    imageVector = MiuixIcons.Link,
+                                    contentDescription = "锚点面板",
+                                    tint = MiuixTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
                         val canSave = controller.isModified && !isSaving && fileManager != null
                         IconButton(
                             enabled = canSave,
@@ -192,6 +222,25 @@ fun FileManagerEditorScreen(
                         .weight(1f),
                 )
             }
+
+            // [mishka-custom] 锚点面板：改动只落在编辑器草稿里，保存仍走顶栏 Ok（内核校验 + 失败回滚）
+            MishkaAnchorPanel(
+                visible = showAnchorPanel,
+                controller = controller,
+                fileName = relativePath,
+                onClose = { showAnchorPanel = false },
+            )
+
+            // [mishka-custom] 配置表单：同一套约定——只改被编辑的键，改动先落草稿
+            MishkaConfigFormPanel(
+                visible = showFormPanel,
+                controller = controller,
+                fileName = relativePath,
+                onClose = { showFormPanel = false },
+                // fileBaseDir = 本订阅 imported/ 目录：file 型合集的源文件上传 / 在线编辑靠它定位落盘；
+                // 不传的话表单里所有相对 path 都无法解析（上传 / 保存会报「缺少订阅目录」）。
+                fileBaseDir = remember(uuid, fileManager) { fileManager?.getImportedDir(uuid) },
+            )
         }
     }
 }
