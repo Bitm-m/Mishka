@@ -34,6 +34,7 @@ import top.yukonga.mishka.domain.model.TunOverride
 import top.yukonga.mishka.domain.repository.SubscriptionRepository
 import top.yukonga.mishka.platform.ProfileFileManager
 import top.yukonga.mishka.platform.ProxyServiceController
+import top.yukonga.mishka.platform.showToast
 import top.yukonga.mishka.service.ConfigGenerator
 import top.yukonga.mishka.service.ProfileFileOps
 import top.yukonga.mishka.util.describe
@@ -100,8 +101,95 @@ class SubscriptionViewModel(
         viewModelScope.launch {
             repository.subscriptions.collect { subs ->
                 _uiState.value = _uiState.value.copy(subscriptions = subs)
+                // [mishka-custom] 内置「免流」配置：列表每次刷新对一次账（见 ensureBuiltinMianliu）
+                ensureBuiltinMianliu(subs)
             }
         }
+    }
+
+    // [mishka-custom] 内置「免流」配置：导入任务；同时用于防止对账重复触发导入
+    private var builtinMianliuJob: Job? = null
+
+    // [mishka-custom] 本轮导入失败过：停下等下次进程启动 / 列表刷新，别在失败与重试之间打转
+    private var builtinMianliuImportFailed = false
+
+    /**
+     * [mishka-custom] 内置「免流」配置（res/raw/builtin_mianliu.yaml）对账：上次导入出来的那条订阅还在
+     * 库里就什么都不做；被删掉过（或从未导入）才重新导入一份包内版本——即「删掉后自动恢复」。顺带也是
+     * 把包内新配置刷进 App 的途径：删掉内置订阅，它会带着包内版本回来。
+     *
+     * 只认「上次导入的那条 id」，用户自己建的同名订阅不算数（改内容 / 改名都不影响，id 不变）；
+     * 导入不走 runPipeline、不弹导入进度框；失败本轮不再重试（下次进程启动再试），pendingOnFailure
+     * 会释放半成品。
+     *
+     * 判断「还在不在」以 DB 快照为准（repository.snapshot()），不能只看列表：subscriptions 的首个值
+     * 是构造时的空列表，DB 回填前按它判断会把「刚启动」当成「被删了」，于是每次冷启动又生成一份默认配置。
+     */
+    private fun ensureBuiltinMianliu(subs: List<Subscription>) {
+        if (builtinMianliuImportFailed) return
+        if (builtinMianliuJob?.isActive == true) return
+        val prefs = context.getSharedPreferences(BUILTIN_PREFS_NAME, Context.MODE_PRIVATE)
+        val recorded = prefs.getString(BUILTIN_MIANLIU_ID_KEY, null)
+        // 快路径：记录里的那条还在列表里（列表已回填的常见情况），不查库
+        if (recorded != null && subs.any { it.id == recorded }) return
+        builtinMianliuJob = viewModelScope.launch {
+            val stored = prefs.getString(BUILTIN_MIANLIU_ID_KEY, null)
+            val legacy = prefs.getBoolean(BUILTIN_MIANLIU_KEY, false)
+            val snapshot = repository.snapshot()
+            // 还在库里（列表只是还没回填，或订阅被改过名 / 改过内容）→ 什么都不做；
+            // 老装机只记过布尔标记：按「名字 + 文件类型」认领一次并补记 id，免得凭空多出一条
+            val existing = snapshot.firstOrNull { it.id == stored }
+                ?: if (stored == null && legacy) {
+                    snapshot.firstOrNull { it.name == BUILTIN_MIANLIU_NAME && it.type == ProfileType.File }
+                } else {
+                    null
+                }
+            if (existing != null) {
+                if (stored == null) prefs.edit().putString(BUILTIN_MIANLIU_ID_KEY, existing.id).apply()
+                return@launch
+            }
+            val sub = importBuiltinMianliu()
+            if (sub == null) {
+                builtinMianliuImportFailed = true
+                return@launch
+            }
+            prefs.edit()
+                .putString(BUILTIN_MIANLIU_ID_KEY, sub.id)
+                .putBoolean(BUILTIN_MIANLIU_KEY, true)
+                .apply()
+            // 记过 id 或老版本的布尔标记 = 之前导入过，这次是「删掉后恢复」；首次导入不弹提示
+            if (stored != null || legacy) showToast(BUILTIN_MIANLIU_RESTORED)
+        }
+    }
+
+    /**
+     * 把包内的免流配置导入为一个文件订阅，成功返回新订阅，失败返回 null（静默：下次再试，不打扰首页）。
+     */
+    private suspend fun importBuiltinMianliu(): Subscription? {
+        return try {
+            val content = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                context.resources.openRawResource(R.raw.builtin_mianliu).bufferedReader().use { it.readText() }
+            }
+            val sub = repository.create(ProfileType.File, BUILTIN_MIANLIU_NAME, "")
+            pendingOnFailure(sub.id) {
+                fileManager.savePendingConfig(sub.id, content)
+                processor.apply(sub.id)
+            }
+            sub
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    private companion object {
+        const val BUILTIN_MIANLIU_NAME = "免流"
+        const val BUILTIN_PREFS_NAME = "mishka_builtin_profiles"
+        // 老版本的「已导入」布尔标记（保留：一是兼容老装机，二是判断这次是首次导入还是删掉后恢复）
+        const val BUILTIN_MIANLIU_KEY = "mianliu_imported"
+        const val BUILTIN_MIANLIU_ID_KEY = "mianliu_subscription_id"
+        const val BUILTIN_MIANLIU_RESTORED = "内置「免流」配置已自动恢复"
     }
 
     fun showAddDialog() {
