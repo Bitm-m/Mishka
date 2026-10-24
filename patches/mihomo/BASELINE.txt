@@ -2,22 +2,24 @@
 kernel_repo=https://github.com/jieluojun/mihomo
 branch=Alpha
 base_commit=22290fb0ab55d156b7f0b0d844f8754ff5668488
-patched_tree=b1226da62b36a499d84f0e1faf8a7c25f4f5dc94
+patched_tree=80e10b64284d791bc99e248f4ad1f99c34209b89
 # --- 补丁文件 sha256 ---
 patch 59e98733b863c5fc60e02df4bb23173803389f20697a1fdeff7213709ab3d71c 0001-config-override-json.patch
 patch b9692040eaa9c304a8a4eb3fc2f232cfcbfe6d84d77179d064834db9d9ba71d3 0002-sing-tun-mishka-build-tag.patch
-patch 15e56e4a566e0fcd4a09f47b2c02e7e53a9e338af2885abee7b1190f94f8f7b5 0003-config-mishka-tun-dns-patch.patch
+patch 38f65d1a3b1553521d6a8299d2658c2e2f8077b301c4931f939ba4fccc0d7b53 0003-config-mishka-tun-dns-patch.patch
 patch 88d91d710791771f9c6e322a2f80f35e6e5de10f15e77baedc1fe6325df575bb 0004-sing-tun-forwarder-bind-interface.patch
 patch 030ac33f8f3d2d69175f6c721f390f8feb2e4e8b49235fc72a132d17c9b9ba71 0005-disable-ebpf-listener-noop.patch
 patch e891b0abebbff89b9f97d473b0c2b4b17212c2f00aaf59d2a3ccf33b2f331858 0006-process-name-android-uid-fallback.patch
 patch c34069b083c169ae8bca0234c3a575367e9ddb4b0cb5688a97531ba54482bc69 0007-constant-safe-path-provider-sandbox.patch
 # --- 打补丁后各文件 blob ---
+blob 001881dff84212cb0c5c85400e47e46839ece2f8 component/resource/fetcher.go
 blob e63c6410c305462d1e70ba78d20374865f496693 config/config.go
 blob 7a42efd56f8496c618cc6a04b13f0af5d9343898 config/patch_mishka.go
 blob 0c0906a988e09834e8a4d90473f7f31e5cef1016 constant/path.go
 blob 1dae7e4e39c36f2d67f49d02c76ebc8f47f55f4a constant/path_extra_test.go
 blob e09412bc96f2bdbc77ba498f559c0cd64b62b693 dns/patch_android.go
 blob 461eff47304be8e45f7144299dd877e58d393fa4 dns/system_common.go
+blob ec80d92faceb5d5022fea1924c23b1823cfb9ea1 hub/executor/executor.go
 blob c2ddfde439cc3f48af9577b13409791c2d625fdf listener/inbound/ebpf.go
 blob d91a3f56ae7bad13f16bae4619d4d6570bb3dc57 listener/inbound/ebpf_update_test.go
 blob 065ee335d576396f4ac4174ccd55a752d9941241 listener/listener.go

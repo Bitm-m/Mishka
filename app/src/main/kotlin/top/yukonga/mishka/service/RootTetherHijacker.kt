@@ -161,7 +161,6 @@ object RootTetherHijacker {
             Mode.BYPASS -> applyBypass(interfaces)
             Mode.PROXY -> if (tproxySupported) applyTproxy(interfaces, effectivePort) else applyProxyFallback(interfaces)
         }
-        dumpState()
     }
 
     /**
@@ -293,26 +292,29 @@ object RootTetherHijacker {
      * 用户需在热点起来后 restart 代理触发重新 apply。
      */
     private fun applyIpRuleAction(interfaces: List<String>, action: String, label: String) {
-        for (iface in interfaces) {
-            val escaped = RootHelper.escapeShellSingleQuoted(iface)
-            val v4 = runWithOutput("ip rule add iif $escaped $action priority $PRIORITY_V4")
-            val v6 = runWithOutput("ip -6 rule add iif $escaped $action priority $PRIORITY_V6")
-            Log.i(TAG, "$label iif=$iface v4[code=${v4.code}, out=${v4.output.oneLine()}] v6[code=${v6.code}, out=${v6.output.oneLine()}]")
-
-            val v4Subnets = resolveSubnets(iface, v6 = false)
-            val v6Subnets = resolveSubnets(iface, v6 = true)
-            for (net in v4Subnets) {
-                val r = runWithOutput("ip rule add to $net $action priority $PRIORITY_RETURN_V4")
-                Log.i(TAG, "$label return to=$net code=${r.code} out=${r.output.oneLine()}")
+        val script = buildString {
+            appendLine("#!/system/bin/sh")
+            appendLine("set +e")
+            for (iface in interfaces) {
+                val escaped = RootHelper.escapeShellSingleQuoted(iface)
+                appendLine("ip rule add iif $escaped $action priority $PRIORITY_V4 2>/dev/null")
+                appendLine("ip -6 rule add iif $escaped $action priority $PRIORITY_V6 2>/dev/null")
+                val v4Subnets = resolveSubnets(iface, v6 = false)
+                val v6Subnets = resolveSubnets(iface, v6 = true)
+                for (net in v4Subnets) {
+                    appendLine("ip rule add to $net $action priority $PRIORITY_RETURN_V4 2>/dev/null")
+                }
+                for (net in v6Subnets) {
+                    appendLine("ip -6 rule add to $net $action priority $PRIORITY_RETURN_V6 2>/dev/null")
+                }
+                if (v4Subnets.isEmpty() && v6Subnets.isEmpty()) {
+                    Log.w(TAG, "iif=$iface has no resolvable subnet (interface down or no IP), return-path rule skipped")
+                }
             }
-            for (net in v6Subnets) {
-                val r = runWithOutput("ip -6 rule add to $net $action priority $PRIORITY_RETURN_V6")
-                Log.i(TAG, "$label return (v6) to=$net code=${r.code} out=${r.output.oneLine()}")
-            }
-            if (v4Subnets.isEmpty() && v6Subnets.isEmpty()) {
-                Log.w(TAG, "iif=$iface has no resolvable subnet (interface down or no IP), return-path rule skipped")
-            }
+            appendLine("exit 0")
         }
+        val code = RootHelper.runRootScriptHeredoc(script, timeoutSeconds = 10)
+        Log.i(TAG, "$label applied for ifaces=$interfaces code=$code")
     }
 
     /**

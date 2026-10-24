@@ -163,8 +163,13 @@ patch0008_blob_after=d0e1558f176d78d310f95df6bbb227747c6689a2 app/src/main/res/v
 # --- 0009：代理模式即时切换：运行模式（规则 / 全局 / 直连）改走 PATCH /configs 热生效（对齐 mihomo_box 模块的运行模式切换），随后后台断开存量连接；不再「停止再启动」内核，PATCH 失败才回退一次重启 ---
 patch0009_file=patches/app/0009-instant-mode-switch.patch
 patch0009_prereq=0001,0002,0003,0004,0005,0006,0007,0008
-patch0009_sha256=465dc979b03e2b3de6be0a12108f406193e6ba8ba056ea11c81cc6206d3f9e2a
+patch0009_sha256=235ab5542f412716846ef79917cab5a096306fa5f738187e9d218b09fbc0b33e
 patch0009_blob_after=094f34f3004e8cc9e38f6ced339d498a7afc124e app/src/main/kotlin/top/yukonga/mishka/data/api/MihomoApiClient.kt
 patch0009_blob_after=4bbf62ee103498407012ff78ac556c3dd80cc922 app/src/main/kotlin/top/yukonga/mishka/data/repository/MihomoRepositoryImpl.kt
 patch0009_blob_after=4882081011fa403e7dacd3849120528eaf7fee5d app/src/main/kotlin/top/yukonga/mishka/domain/repository/MihomoRepository.kt
+patch0009_blob_after=a5b34827a96c36069b86afbaf29dedce3b756962 app/src/main/kotlin/top/yukonga/mishka/service/MihomoRunner.kt
+patch0009_blob_after=0a4459050ba316b7dfb363a80cfa8e6d87e4a8d3 app/src/main/kotlin/top/yukonga/mishka/service/MishkaRootService.kt
+patch0009_blob_after=9b9ed792f1ad2ab63938d53522da288172388406 app/src/main/kotlin/top/yukonga/mishka/service/MishkaTunService.kt
+patch0009_blob_after=f2196f2757ae2ae959b13a8989f2887bf4429173 app/src/main/kotlin/top/yukonga/mishka/service/RootRuntimeCache.kt
+patch0009_blob_after=87e2648060d2454c4bbe4da82a305a3f545ed0c6 app/src/main/kotlin/top/yukonga/mishka/service/RootTetherHijacker.kt
 patch0009_blob_after=e9376400d2b471566436196bb0a2b7031e36c4db app/src/main/kotlin/top/yukonga/mishka/viewmodel/HomeViewModel.kt

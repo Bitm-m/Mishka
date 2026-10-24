@@ -62,6 +62,179 @@ index 0ad9be1..4882081 100644
      suspend fun getProxies(): Result<ProxiesResponse>
      suspend fun getGroups(): Result<GroupsResponse>
      suspend fun selectProxy(group: String, name: String): Result<Unit>
+diff --git a/app/src/main/kotlin/top/yukonga/mishka/service/MihomoRunner.kt b/app/src/main/kotlin/top/yukonga/mishka/service/MihomoRunner.kt
+index 99703e8..a5b3482 100644
+--- a/app/src/main/kotlin/top/yukonga/mishka/service/MihomoRunner.kt
++++ b/app/src/main/kotlin/top/yukonga/mishka/service/MihomoRunner.kt
+@@ -296,20 +296,20 @@ class MihomoRunner(private val context: Context) {
+     private suspend fun waitForReady(useRoot: Boolean, workDir: File): String? {
+         var rootRound = 0
+         var vpnApiChecks = 0
+-        while (!useRoot || rootRound < 20) {
+-            delay(500)
+-            val checkLiveness = !useRoot || rootRound++ % LIVENESS_CHECK_EVERY == 0
++        var pollRound = 0
++        while (!useRoot || rootRound < 40) {
++            delay(if (pollRound++ < 15) 80L else 250L)
++            val checkLiveness = !useRoot || (++rootRound >= 8 && rootRound % LIVENESS_CHECK_EVERY == 0)
+             if (useRoot) {
+-                if (isApiAuthorized(secret, externalController, timeoutMs = 500)) {
+-                    delay(100)
++                if (isApiAuthorized(secret, externalController, timeoutMs = 400)) {
+                     return scanLogForTunError(true, workDir)
+                 }
+             } else {
+                 // provider 初始化不占用 API 探测预算，原生 ready 后才开始计数。
+                 val ready = vpnReadyFile?.takeIf { it.isFile }?.readText() == "ready"
+                 if (ready) {
+-                    if (isApiAuthorized(secret, externalController, timeoutMs = 500)) return null
+-                    if (++vpnApiChecks >= 20) break
++                    if (isApiAuthorized(secret, externalController, timeoutMs = 400)) return null
++                    if (++vpnApiChecks >= 30) break
+                 }
+             }
+             if (!checkLiveness) continue
+diff --git a/app/src/main/kotlin/top/yukonga/mishka/service/MishkaRootService.kt b/app/src/main/kotlin/top/yukonga/mishka/service/MishkaRootService.kt
+index 887f041..0a44590 100644
+--- a/app/src/main/kotlin/top/yukonga/mishka/service/MishkaRootService.kt
++++ b/app/src/main/kotlin/top/yukonga/mishka/service/MishkaRootService.kt
+@@ -380,7 +380,8 @@ class MishkaRootService : Service() {
+             // 监控若已离开 delay()，cancel 打断不了读日志，更停不掉已进入 NonCancellable 的回写。
+             // 等它收敛后再 prepare，避免它随后 rm -rf 掉新沙箱，或 stopSelf 掉这次启动。
+             joinSuperseded(supersedeMonitor())
+-            val previousStopClean = storage.getString(StorageKeys.ROOT_LAST_STOP_CLEAN, "false") == "true"
++            val previousStopClean = existingPid <= 0 &&
++                    storage.getString(StorageKeys.ROOT_LAST_STOP_CLEAN, "true") == "true"
+             if (!preCleaned && !previousStopClean) {
+                 // pid 字段比 runner.isRunning 便宜；后者在 ROOT 下会额外 fork 一次 su 判活。
+                 if (runner.pid > 0) runner.stop()
+@@ -395,8 +396,9 @@ class MishkaRootService : Service() {
+             // 上次停机若没来得及回写，这里补一次；进程已在上面杀掉
+             RootRuntimeCache.releaseAll(this@MishkaRootService, subscriptionRepository)
+ 
+-            // 3. 检查 ROOT 权限
+-            if (!RootHelper.hasRootAccess()) {
++            // 3. 检查 ROOT 权限（优先复用已验证缓存，避免每次启动多 fork 一次 su -c id）
++            val hasRoot = storage.getString(StorageKeys.HAS_ROOT, "false") == "true" || RootHelper.hasRootAccess()
++            if (!hasRoot) {
+                 Log.e(TAG, "Failed to obtain root access")
+                 ProxyServiceBridge.updateState(
+                     ProxyServiceStatus(ProxyState.Error, errorMessage = getString(R.string.error_root_failed), tunMode = tunMode)
+@@ -404,10 +406,12 @@ class MishkaRootService : Service() {
+                 stopSelf()
+                 return@launch
+             }
++            storage.putString(StorageKeys.HAS_ROOT, "true")
+ 
+             // 3.3 TPROXY submode 需要内核支持 xt_TPROXY；不具备时直接失败，不做静默降级
+             if (submode == Submode.Tproxy) {
+-                if (!RootTproxyApplier.probeTproxySupport()) {
++                val cachedCapable = storage.getString(StorageKeys.ROOT_TPROXY_KERNEL_CAPABLE, "") == "true"
++                if (!cachedCapable && !RootTproxyApplier.probeTproxySupport()) {
+                     storage.putString(StorageKeys.ROOT_TPROXY_KERNEL_CAPABLE, "false")
+                     Log.e(TAG, "xt_TPROXY unsupported, cannot start ROOT TPROXY mode")
+                     ProxyServiceBridge.updateState(
+diff --git a/app/src/main/kotlin/top/yukonga/mishka/service/MishkaTunService.kt b/app/src/main/kotlin/top/yukonga/mishka/service/MishkaTunService.kt
+index 073be29..9b9ed79 100644
+--- a/app/src/main/kotlin/top/yukonga/mishka/service/MishkaTunService.kt
++++ b/app/src/main/kotlin/top/yukonga/mishka/service/MishkaTunService.kt
+@@ -183,10 +183,12 @@ class MishkaTunService : VpnService() {
+                     .trim()
+                     .takeIf { it.isNotEmpty() }
+                     ?: ConfigGenerator.resolveRootTunDevice(userOverride, null, storage)
+-                // ROOT 孤儿仍可能持有路由；切回 VPN 前保留既有清理和缓存回写。
++                // ROOT 孤儿仍可能持有路由；仅当存在持久化 ROOT PID 或上次 ROOT 未正常停机时才执行恢复清理，
++                // 避免在已 root 设备上每次启动 VPN 都跑 4 轮 su + iptables teardown（耗时 2~4s）。
+                 val hadRootPid = storage.getString(StorageKeys.ROOT_MIHOMO_PID, "").isNotEmpty()
+                 val hasRoot = storage.getString(StorageKeys.HAS_ROOT, "false") == "true"
+-                if (hadRootPid || hasRoot) {
++                val rootStopClean = storage.getString(StorageKeys.ROOT_LAST_STOP_CLEAN, "true") == "true"
++                if (hadRootPid || (hasRoot && !rootStopClean)) {
+                     RootHelper.cleanupOrphanedMihomo(tunDevice = residualTun)
+                     RootTetherHijacker.teardown()
+                     RootTproxyApplier.teardown()
+@@ -197,6 +199,9 @@ class MishkaTunService : VpnService() {
+                     storage.putString(StorageKeys.ROOT_ACTIVE_SUBSCRIPTION_ID, "")
+                     storage.putString(StorageKeys.ROOT_TUN_DEVICE_ACTIVE, "")
+                     storage.putString(StorageKeys.ROOT_CONTROLLER_API_ADDRESS_ACTIVE, "")
++                    storage.putString(StorageKeys.ROOT_LAST_STOP_CLEAN, "true")
++                } else if (hasRoot) {
++                    RootRuntimeCache.releaseAll(this@MishkaTunService, subscriptionRepository)
+                 }
+ 
+                 val profileModeConfig = ActiveProfileRuntimeConfig.prepare(
+diff --git a/app/src/main/kotlin/top/yukonga/mishka/service/RootRuntimeCache.kt b/app/src/main/kotlin/top/yukonga/mishka/service/RootRuntimeCache.kt
+index 6ee01bb..f2196f2 100644
+--- a/app/src/main/kotlin/top/yukonga/mishka/service/RootRuntimeCache.kt
++++ b/app/src/main/kotlin/top/yukonga/mishka/service/RootRuntimeCache.kt
+@@ -253,6 +253,7 @@ internal fun isProviderCacheRel(path: String): Boolean {
+     if (path.startsWith("/")) return false
+     val parts = path.split('/')
+     if (parts.any { it.isEmpty() || it == "." || it == ".." }) return false
++    if (parts.first() == "ui" || parts.first() == "downloadUI.tmp") return false
+     return path !in PROVIDER_CACHE_DENY_RELS
+ }
+ 
+diff --git a/app/src/main/kotlin/top/yukonga/mishka/service/RootTetherHijacker.kt b/app/src/main/kotlin/top/yukonga/mishka/service/RootTetherHijacker.kt
+index cb24b64..87e2648 100644
+--- a/app/src/main/kotlin/top/yukonga/mishka/service/RootTetherHijacker.kt
++++ b/app/src/main/kotlin/top/yukonga/mishka/service/RootTetherHijacker.kt
+@@ -161,7 +161,6 @@ object RootTetherHijacker {
+             Mode.BYPASS -> applyBypass(interfaces)
+             Mode.PROXY -> if (tproxySupported) applyTproxy(interfaces, effectivePort) else applyProxyFallback(interfaces)
+         }
+-        dumpState()
+     }
+ 
+     /**
+@@ -293,26 +292,29 @@ object RootTetherHijacker {
+      * 用户需在热点起来后 restart 代理触发重新 apply。
+      */
+     private fun applyIpRuleAction(interfaces: List<String>, action: String, label: String) {
+-        for (iface in interfaces) {
+-            val escaped = RootHelper.escapeShellSingleQuoted(iface)
+-            val v4 = runWithOutput("ip rule add iif $escaped $action priority $PRIORITY_V4")
+-            val v6 = runWithOutput("ip -6 rule add iif $escaped $action priority $PRIORITY_V6")
+-            Log.i(TAG, "$label iif=$iface v4[code=${v4.code}, out=${v4.output.oneLine()}] v6[code=${v6.code}, out=${v6.output.oneLine()}]")
+-
+-            val v4Subnets = resolveSubnets(iface, v6 = false)
+-            val v6Subnets = resolveSubnets(iface, v6 = true)
+-            for (net in v4Subnets) {
+-                val r = runWithOutput("ip rule add to $net $action priority $PRIORITY_RETURN_V4")
+-                Log.i(TAG, "$label return to=$net code=${r.code} out=${r.output.oneLine()}")
+-            }
+-            for (net in v6Subnets) {
+-                val r = runWithOutput("ip -6 rule add to $net $action priority $PRIORITY_RETURN_V6")
+-                Log.i(TAG, "$label return (v6) to=$net code=${r.code} out=${r.output.oneLine()}")
+-            }
+-            if (v4Subnets.isEmpty() && v6Subnets.isEmpty()) {
+-                Log.w(TAG, "iif=$iface has no resolvable subnet (interface down or no IP), return-path rule skipped")
++        val script = buildString {
++            appendLine("#!/system/bin/sh")
++            appendLine("set +e")
++            for (iface in interfaces) {
++                val escaped = RootHelper.escapeShellSingleQuoted(iface)
++                appendLine("ip rule add iif $escaped $action priority $PRIORITY_V4 2>/dev/null")
++                appendLine("ip -6 rule add iif $escaped $action priority $PRIORITY_V6 2>/dev/null")
++                val v4Subnets = resolveSubnets(iface, v6 = false)
++                val v6Subnets = resolveSubnets(iface, v6 = true)
++                for (net in v4Subnets) {
++                    appendLine("ip rule add to $net $action priority $PRIORITY_RETURN_V4 2>/dev/null")
++                }
++                for (net in v6Subnets) {
++                    appendLine("ip -6 rule add to $net $action priority $PRIORITY_RETURN_V6 2>/dev/null")
++                }
++                if (v4Subnets.isEmpty() && v6Subnets.isEmpty()) {
++                    Log.w(TAG, "iif=$iface has no resolvable subnet (interface down or no IP), return-path rule skipped")
++                }
+             }
++            appendLine("exit 0")
+         }
++        val code = RootHelper.runRootScriptHeredoc(script, timeoutSeconds = 10)
++        Log.i(TAG, "$label applied for ifaces=$interfaces code=$code")
+     }
+ 
+     /**
 diff --git a/app/src/main/kotlin/top/yukonga/mishka/viewmodel/HomeViewModel.kt b/app/src/main/kotlin/top/yukonga/mishka/viewmodel/HomeViewModel.kt
 index feed731..e937640 100644
 --- a/app/src/main/kotlin/top/yukonga/mishka/viewmodel/HomeViewModel.kt

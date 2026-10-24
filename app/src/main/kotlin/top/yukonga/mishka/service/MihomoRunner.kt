@@ -296,20 +296,20 @@ class MihomoRunner(private val context: Context) {
     private suspend fun waitForReady(useRoot: Boolean, workDir: File): String? {
         var rootRound = 0
         var vpnApiChecks = 0
-        while (!useRoot || rootRound < 20) {
-            delay(500)
-            val checkLiveness = !useRoot || rootRound++ % LIVENESS_CHECK_EVERY == 0
+        var pollRound = 0
+        while (!useRoot || rootRound < 40) {
+            delay(if (pollRound++ < 15) 80L else 250L)
+            val checkLiveness = !useRoot || (++rootRound >= 8 && rootRound % LIVENESS_CHECK_EVERY == 0)
             if (useRoot) {
-                if (isApiAuthorized(secret, externalController, timeoutMs = 500)) {
-                    delay(100)
+                if (isApiAuthorized(secret, externalController, timeoutMs = 400)) {
                     return scanLogForTunError(true, workDir)
                 }
             } else {
                 // provider 初始化不占用 API 探测预算，原生 ready 后才开始计数。
                 val ready = vpnReadyFile?.takeIf { it.isFile }?.readText() == "ready"
                 if (ready) {
-                    if (isApiAuthorized(secret, externalController, timeoutMs = 500)) return null
-                    if (++vpnApiChecks >= 20) break
+                    if (isApiAuthorized(secret, externalController, timeoutMs = 400)) return null
+                    if (++vpnApiChecks >= 30) break
                 }
             }
             if (!checkLiveness) continue

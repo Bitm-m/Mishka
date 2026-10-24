@@ -380,7 +380,8 @@ class MishkaRootService : Service() {
             // 监控若已离开 delay()，cancel 打断不了读日志，更停不掉已进入 NonCancellable 的回写。
             // 等它收敛后再 prepare，避免它随后 rm -rf 掉新沙箱，或 stopSelf 掉这次启动。
             joinSuperseded(supersedeMonitor())
-            val previousStopClean = storage.getString(StorageKeys.ROOT_LAST_STOP_CLEAN, "false") == "true"
+            val previousStopClean = existingPid <= 0 &&
+                    storage.getString(StorageKeys.ROOT_LAST_STOP_CLEAN, "true") == "true"
             if (!preCleaned && !previousStopClean) {
                 // pid 字段比 runner.isRunning 便宜；后者在 ROOT 下会额外 fork 一次 su 判活。
                 if (runner.pid > 0) runner.stop()
@@ -395,8 +396,9 @@ class MishkaRootService : Service() {
             // 上次停机若没来得及回写，这里补一次；进程已在上面杀掉
             RootRuntimeCache.releaseAll(this@MishkaRootService, subscriptionRepository)
 
-            // 3. 检查 ROOT 权限
-            if (!RootHelper.hasRootAccess()) {
+            // 3. 检查 ROOT 权限（优先复用已验证缓存，避免每次启动多 fork 一次 su -c id）
+            val hasRoot = storage.getString(StorageKeys.HAS_ROOT, "false") == "true" || RootHelper.hasRootAccess()
+            if (!hasRoot) {
                 Log.e(TAG, "Failed to obtain root access")
                 ProxyServiceBridge.updateState(
                     ProxyServiceStatus(ProxyState.Error, errorMessage = getString(R.string.error_root_failed), tunMode = tunMode)
@@ -404,10 +406,12 @@ class MishkaRootService : Service() {
                 stopSelf()
                 return@launch
             }
+            storage.putString(StorageKeys.HAS_ROOT, "true")
 
             // 3.3 TPROXY submode 需要内核支持 xt_TPROXY；不具备时直接失败，不做静默降级
             if (submode == Submode.Tproxy) {
-                if (!RootTproxyApplier.probeTproxySupport()) {
+                val cachedCapable = storage.getString(StorageKeys.ROOT_TPROXY_KERNEL_CAPABLE, "") == "true"
+                if (!cachedCapable && !RootTproxyApplier.probeTproxySupport()) {
                     storage.putString(StorageKeys.ROOT_TPROXY_KERNEL_CAPABLE, "false")
                     Log.e(TAG, "xt_TPROXY unsupported, cannot start ROOT TPROXY mode")
                     ProxyServiceBridge.updateState(

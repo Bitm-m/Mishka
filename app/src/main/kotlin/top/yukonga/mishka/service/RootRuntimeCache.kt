@@ -253,6 +253,7 @@ internal fun isProviderCacheRel(path: String): Boolean {
     if (path.startsWith("/")) return false
     val parts = path.split('/')
     if (parts.any { it.isEmpty() || it == "." || it == ".." }) return false
+    if (parts.first() == "ui" || parts.first() == "downloadUI.tmp") return false
     return path !in PROVIDER_CACHE_DENY_RELS
 }
 
