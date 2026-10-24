@@ -40,10 +40,19 @@ jobs:
               git -C mihomo checkout -q "$BASE_COMMIT"
             fi
           fi
-          for p in patches/mihomo/[0-9]*.patch; do
-            echo "Applying $p ..."
+          for p in "$PWD"/patches/mihomo/[0-9]*.patch; do
+            echo "Applying $(basename "$p") ..."
             git -C mihomo apply "$p" || git -C mihomo apply --3way "$p"
           done
+          cat > go.work <<'EOF'
+          go 1.25.0
+
+          use (
+          	./app/src/main/native/mishka_core
+          	./mihomo
+          )
+          EOF
+          sort -u app/src/main/native/mishka_core/go.sum mihomo/go.sum > go.work.sum
           git config submodule.mihomo.ignore all
           SHA="$(git -C mihomo rev-parse --short=8 HEAD)"
           echo "MIHOMO_VERSION=alpha-smart-${SHA}-zero" >> "$GITHUB_ENV"
@@ -59,11 +68,6 @@ jobs:
         with:
           go-version-file: app/src/main/native/mishka_core/go.mod
           cache-dependency-path: app/src/main/native/mishka_core/go.sum
-
-      - name: Sync Go module dependencies
-        run: |
-          cd app/src/main/native/mishka_core
-          go mod tidy
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
