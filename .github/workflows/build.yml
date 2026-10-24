@@ -26,6 +26,23 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Set up JDK
+        uses: actions/setup-java@v6
+        with:
+          java-version: 21
+          distribution: zulu
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: app/src/main/native/mishka_core/go.mod
+          cache-dependency-path: |
+            app/src/main/native/mishka_core/go.sum
+            patches/mihomo/go.work.sum
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
       - name: Prepare custom mihomo kernel
         run: |
           set -euo pipefail
@@ -52,33 +69,56 @@ jobs:
           	./mihomo
           )
           EOF
-          sort -u app/src/main/native/mishka_core/go.sum mihomo/go.sum > go.work.sum
+          cp patches/mihomo/go.work.sum go.work.sum
+          {
+            echo "/go.work"
+            echo "/go.work.sum"
+          } >> .git/info/exclude
           git config submodule.mihomo.ignore all
           SHA="$(git -C mihomo rev-parse --short=8 HEAD)"
-          echo "MIHOMO_VERSION=alpha-smart-${SHA}-zero" >> "$GITHUB_ENV"
-
-      - name: Set up JDK
-        uses: actions/setup-java@v6
-        with:
-          java-version: 21
-          distribution: zulu
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: app/src/main/native/mishka_core/go.mod
-          cache-dependency-path: app/src/main/native/mishka_core/go.sum
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v6
+          echo "MIHOMO_VERSION=alpha-smart-${SHA}-with-at" >> "$GITHUB_ENV"
 
       - name: Decode Android signing key
-        if: ${{ github.event_name != 'pull_request' }}
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -n "$SIGNING_KEY" ]; then
-            echo "$SIGNING_KEY" | base64 -d > keystore.jks
+          set -euo pipefail
+          if [ -n "${SIGNING_KEY:-}" ]; then
+            ks="$RUNNER_TEMP/release.jks"
+            printf '%s' "$SIGNING_KEY" | base64 -d > "$ks"
+            {
+              echo "KEYSTORE_PATH=$ks"
+              echo "KEYSTORE_PASS=$KEY_STORE_PASSWORD"
+              echo "KEY_ALIAS=${ALIAS:-mishka}"
+              echo "KEY_PASSWORD=${KEY_PASSWORD:-$KEY_STORE_PASSWORD}"
+            } >> "$GITHUB_ENV"
+          elif [ -n "${KEYSTORE_BASE64:-}" ]; then
+            ks="$RUNNER_TEMP/release.jks"
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$ks"
+            {
+              echo "KEYSTORE_PATH=$ks"
+              echo "KEYSTORE_PASS=$KEYSTORE_PASS"
+              echo "KEY_ALIAS=${KEY_ALIAS:-mishka}"
+              echo "KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASS}"
+            } >> "$GITHUB_ENV"
+          else
+            ks="$RUNNER_TEMP/debug-key.jks"
+            keytool -genkeypair -keystore "$ks" -storetype PKCS12 \
+              -alias androiddebugkey -storepass android -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10950 \
+              -dname "CN=Android Debug,O=Android,C=US" >/dev/null
+            {
+              echo "KEYSTORE_PATH=$ks"
+              echo "KEYSTORE_PASS=android"
+              echo "KEY_ALIAS=androiddebugkey"
+              echo "KEY_PASSWORD=android"
+            } >> "$GITHUB_ENV"
           fi
 
       - name: Download GeoIP files
@@ -86,19 +126,9 @@ jobs:
 
       - name: Build Debug APK
         run: ./gradlew "-Pmihomo.version=${MIHOMO_VERSION}" :app:assembleDebug
-        env:
-          KEYSTORE_PATH: "${{ github.workspace }}/keystore.jks"
-          KEYSTORE_PASS: ${{ secrets.KEY_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Build Release APK
         run: ./gradlew "-Pmihomo.version=${MIHOMO_VERSION}" :app:assembleRelease
-        env:
-          KEYSTORE_PATH: "${{ github.workspace }}/keystore.jks"
-          KEYSTORE_PASS: ${{ secrets.KEY_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Upload Debug APK (arm64-v8a)
         uses: actions/upload-artifact@v7
