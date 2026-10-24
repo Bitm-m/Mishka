@@ -6,7 +6,7 @@ upstream_commit=08bc6d5cc36e733d213d797857163207e84dc67d
 # --- 0001：锚点面板 + 可视化编辑器：自定义编辑器与订阅页入口迁移；编辑器修复（拖动落点 / 回弹、开关误报、挪动末尾规则残留字符）；规则编辑按钮间距；maplist 拖动排序；路由规则序号；路由规则匹配值省略号；应用选择器（搜索兼手动添加、已选置顶、显示清单计数，不新增依赖） ---
 patch0001_file=patches/app/0001-anchor-panel.patch
 patch0001_prereq=
-patch0001_sha256=a976f2b8cabb2f6e9a0aacf8f258532cf8bc18df492df4291360334392fbad0c
+patch0001_sha256=62d29cdf64eecbb438caedcbbb4948a61fc88573546f283d43364d5aad2d8f37
 patch0001_blob_after=d72a6dbf5f06576df47d6a9e308c53ff42cd70fb app/build.gradle.kts
 patch0001_blob_after=4cf849b79ec5878fcd691478ef2d797ef9268831 app/src/main/cpp/mishka_jni.c
 patch0001_blob_after=4f5bd883a87748a6d815a4dd1719e3970abe6459 app/src/main/kotlin/top/yukonga/mishka/MainActivity.kt
@@ -70,7 +70,7 @@ patch0001_blob_after=a63ba6684fe79b7eb775d7339bebc3d61ac71c3e app/src/main/kotli
 patch0001_blob_after=91a7411f1c2f09ae2c86ca25c789565ba10d0dfd app/src/main/kotlin/top/yukonga/mishka/viewmodel/SubscriptionViewModel.kt
 patch0001_blob_after=2fab02e9e2e59d0e67ff27f824ce271993b0871d app/src/main/native/mishka_core/runtime.go
 patch0001_blob_after=576492098f8007a031549aa411278235aae5b9ac app/src/main/native/mishka_core/runtime_test.go
-patch0001_blob_new=1dab4a417e4819d51f82eadee967a669619c3f8f app/src/main/native/mishka_core/safe_paths.go
+patch0001_blob_new=c1512195338056a3e1c8680d54cd2c4feb0a0cc5 app/src/main/native/mishka_core/safe_paths.go
 patch0001_blob_after=86dcca1249936049fb9e7c49e7bd35c3cf86c9d8 app/src/main/native/mishka_core/system_dns_android.go
 patch0001_blob_after=90048a4acaf5003e16d997d284cae16bbce957e0 app/src/main/native/mishka_core/system_dns_android_test.go
 patch0001_blob_after=7a7121bd774040519932475cbbb5175fc60e6f4f app/src/main/native/mishka_core/system_dns_unsupported.go
