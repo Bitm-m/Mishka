@@ -24,6 +24,7 @@ import top.yukonga.mishka.data.bridge.MishkaCoreBridge
 import top.yukonga.mishka.data.repository.OverrideJsonStore
 import top.yukonga.mishka.data.repository.SubscriptionRepositoryImpl
 import top.yukonga.mishka.data.store.ProfileTransformWriter
+import top.yukonga.mishka.custom.runtime.TproxyAppFilter
 import top.yukonga.mishka.platform.AppListProvider
 import top.yukonga.mishka.platform.BootSession
 import top.yukonga.mishka.platform.PlatformStorage
@@ -78,6 +79,9 @@ class MishkaRootService : Service() {
     private val transformWriter: ProfileTransformWriter by inject()
     private val subscriptionRepository: SubscriptionRepositoryImpl by inject()
     private var monitorJob: Job? = null
+    // Tproxy 名单模式的周期 UID 重解析任务；上一次装配时的 UID 集合（仅集合变化才重装规则）
+    private var tproxyUidRefreshJob: Job? = null
+    private var tproxyAppliedUids: Set<Int>? = null
     private var notificationRefreshJob: Job? = null
 
     // 本实例启动或 attach 时记下的 runtime 代次。停机清理必须用它，不能事后读全局代次，
@@ -316,9 +320,11 @@ class MishkaRootService : Service() {
                         }
 
                         Submode.Tproxy -> {
+                            val appFilter = readTproxyAppFilter(storage)
                             if (shouldReapplyOnAttach(storage, RootTproxyApplier::anyRulesPresent)) {
-                                applyTproxyRules(storage)
+                                applyTproxyRules(storage, appFilter)
                             }
+                            scheduleTproxyUidRefresh(storage, appFilter)
                         }
 
                         // eBPF 重定向由 mihomo ebpf listener 自己挂 TC，App 侧无规则可补
@@ -602,7 +608,17 @@ class MishkaRootService : Service() {
             // 6.5 按 submode apply 对应的 netfilter 规则集
             when (submode) {
                 Submode.Tun -> applyTetherRules(storage, tproxyForTether)
-                Submode.Tproxy -> applyTproxyRules(storage)
+                Submode.Tproxy -> {
+                    val appFilter = RuntimeOverrideBuilder.resolveTproxyAppFilter(
+                        context = this@MishkaRootService,
+                        userTun = userOverride.tun,
+                        profileTunElement = profileParameters?.tun,
+                        preferUserTunOverrides = profileModeConfig.encrypted || transformPlan.transformPath != null,
+                    )
+                    persistTproxyAppFilter(storage, appFilter)
+                    applyTproxyRules(storage, appFilter)
+                    scheduleTproxyUidRefresh(storage, appFilter)
+                }
                 // eBPF submode 不用 netfilter：流量劫持完全由 mihomo ebpf listener 完成
                 Submode.Ebpf -> {}
             }
@@ -631,25 +647,25 @@ class MishkaRootService : Service() {
     }
 
     /**
-     * ROOT TPROXY 规则装配：读 AppProxy 配置 + tether ifaces，把包名解析为 UID 后交给 Applier。
+     * ROOT TPROXY 规则装配。名单来自启动时写入的快照（见 [RuntimeOverrideBuilder.resolveTproxyAppFilter]），
+     * 这里只把包名解析为 UID 并交给 Applier：白名单 → AllowSelected，黑名单 → DenySelected，无名单 → AllowAll。
      *
      * IPv6 注入复用 [StorageKeys.VPN_ALLOW_IPV6]，与 VPN/ROOT TUN 的 `inet6-address` 同一开关。
      * 默认 false：跳过 ip6tables / `ip -6` 规则，IPv6 出站走内核原生主路由表，避免 mihomo
      * `ipv6: false` 时 TPROXY 重定向 → 拨号失败 → App 重试紧密循环造成的 mihomo 内存增长。
      */
-    private suspend fun applyTproxyRules(storage: PlatformStorage) {
+    private suspend fun applyTproxyRules(storage: PlatformStorage, appFilter: TproxyAppFilter) {
         val appUid = applicationInfo.uid
         val ifaces = RootTetherHijacker.parseInterfaces(
             storage.getString(StorageKeys.ROOT_TETHER_IFACES, RootTetherHijacker.DEFAULT_IFACES)
         )
-        val proxyModeStr = storage.getString(StorageKeys.APP_PROXY_MODE, AppProxyMode.AllowAll.name)
-        val proxyMode = runCatching { AppProxyMode.valueOf(proxyModeStr) }.getOrDefault(AppProxyMode.AllowAll)
-        val packages = storage.getStringSet(StorageKeys.APP_PROXY_PACKAGES, emptySet())
-        val selectedUids = if (packages.isEmpty()) {
-            emptySet()
-        } else {
-            AppListProvider(this@MishkaRootService).resolveUids(packages)
+        val proxyMode = when (appFilter.mode) {
+            TproxyAppFilter.Mode.All -> AppProxyMode.AllowAll
+            TproxyAppFilter.Mode.Include -> AppProxyMode.AllowSelected
+            TproxyAppFilter.Mode.Exclude -> AppProxyMode.DenySelected
         }
+        val selectedUids = resolveTproxyUids(appFilter)
+        tproxyAppliedUids = selectedUids
         val ipv6Enabled = storage.getString(StorageKeys.VPN_ALLOW_IPV6, "false") == "true"
         RootTproxyApplier.apply(
             appUid,
@@ -659,6 +675,66 @@ class MishkaRootService : Service() {
             ipv6Enabled,
             activeRootTproxyPort(storage),
         )
+    }
+
+    /** 名单包名 → UID，并按 tun.include-android-user 展开到其它安卓用户。全部应用模式不解析。 */
+    private suspend fun resolveTproxyUids(appFilter: TproxyAppFilter): Set<Int> {
+        if (appFilter.mode == TproxyAppFilter.Mode.All) return emptySet()
+        val users = appFilter.androidUsers.toSet()
+        return AppListProvider(this@MishkaRootService).resolveUids(appFilter.packages.toSet())
+            .flatMapTo(linkedSetOf<Int>()) { TproxyAppFilter.expandUid(it, users) }
+    }
+
+    /** 启动时写入 Tproxy 名单快照：attach 重连与 UID 重解析沿用它，不再依赖当时的 profile。 */
+    private fun persistTproxyAppFilter(storage: PlatformStorage, appFilter: TproxyAppFilter) {
+        storage.putString(StorageKeys.ROOT_TPROXY_APP_MODE_ACTIVE, appFilter.mode.name)
+        storage.putStringSet(StorageKeys.ROOT_TPROXY_APP_PACKAGES_ACTIVE, appFilter.packages.toSet())
+        storage.putStringSet(
+            StorageKeys.ROOT_TPROXY_APP_USERS_ACTIVE,
+            appFilter.androidUsers.mapTo(linkedSetOf<String>()) { it.toString() },
+        )
+    }
+
+    private fun readTproxyAppFilter(storage: PlatformStorage): TproxyAppFilter {
+        val mode = runCatching {
+            TproxyAppFilter.Mode.valueOf(storage.getString(StorageKeys.ROOT_TPROXY_APP_MODE_ACTIVE, ""))
+        }.getOrNull()
+        // 快照缺失（升级前启动的进程）：退回分应用代理页，与旧版行为一致
+        if (mode == null) return RuntimeOverrideBuilder.resolveTproxyAppFilter(this, null, null, false)
+        return TproxyAppFilter(
+            mode = mode,
+            packages = storage.getStringSet(StorageKeys.ROOT_TPROXY_APP_PACKAGES_ACTIVE, emptySet()).sorted(),
+            androidUsers = storage.getStringSet(StorageKeys.ROOT_TPROXY_APP_USERS_ACTIVE, emptySet())
+                .mapNotNull { it.toIntOrNull() }.sorted(),
+        )
+    }
+
+    /**
+     * 名单模式下周期重解析 UID（间隔 [TPROXY_UID_REFRESH_MS]）：应用重装会换 UID，新装的名单应用也要补进规则。
+     * 只有 UID 集合变化才重装规则。停止 / 重启 / 进程死亡时由 [teardownActiveRootRules] 先取消并等待本任务，
+     * 保证拆规则之后不会再被装回。
+     */
+    private suspend fun scheduleTproxyUidRefresh(storage: PlatformStorage, appFilter: TproxyAppFilter) {
+        tproxyUidRefreshJob?.cancel()
+        tproxyUidRefreshJob = null
+        if (appFilter.mode == TproxyAppFilter.Mode.All) return
+        // attach 路径的规则可能是上一进程装的：以当前解析结果作为基准，避免首次刷新误判为变化
+        if (tproxyAppliedUids == null) tproxyAppliedUids = resolveTproxyUids(appFilter)
+        tproxyUidRefreshJob = scope.launch {
+            while (true) {
+                delay(TPROXY_UID_REFRESH_MS)
+                try {
+                    if (resolveTproxyUids(appFilter) != tproxyAppliedUids) {
+                        Log.i(TAG, "tproxy: 名单 UID 集合变化，重新装配规则")
+                        applyTproxyRules(storage, appFilter)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "tproxy: UID 重解析失败", e)
+                }
+            }
+        }
     }
 
     /**
@@ -687,6 +763,9 @@ class MishkaRootService : Service() {
      */
     private suspend fun teardownActiveRootRules(storage: PlatformStorage) {
         withContext(NonCancellable) {
+            // 先停周期 UID 刷新并等待其结束，否则拆完规则后它可能又把规则装回去
+            tproxyUidRefreshJob?.cancelAndJoin()
+            tproxyUidRefreshJob = null
             when (storage.getString(StorageKeys.ROOT_SUBMODE_ACTIVE, "")) {
                 Submode.Tun.storageValue -> RootTetherHijacker.teardown()
                 Submode.Tproxy.storageValue -> RootTproxyApplier.teardown()
@@ -949,6 +1028,8 @@ class MishkaRootService : Service() {
         destroyed = true
         notificationRefreshJob?.cancel()
         // 只停还在轮询的监控。已经确认进程死亡的回写在 cleanupScope，不能在这里 cancel。
+        // 0008：tproxy 分应用名单的 UID 周期性重解析任务同理，onDestroy 一并取消。
+        tproxyUidRefreshJob?.cancel()
         monitorJob?.cancel()
         dynamicNotification.stop()
         // 注意：onDestroy 不 kill mihomo，让它继续运行以便重连。
@@ -969,6 +1050,8 @@ class MishkaRootService : Service() {
 
         private fun bumpInstanceSerial(): Int = synchronized(this) { ++instanceSerial }
 
+        // 0008：Tproxy 分应用名单的 UID 周期重解析间隔
+        private const val TPROXY_UID_REFRESH_MS = 600_000L
         const val ACTION_START = "top.yukonga.mishka.ROOT_START"
         const val ACTION_STOP = "top.yukonga.mishka.ROOT_STOP"
         const val ACTION_RESTART = "top.yukonga.mishka.ROOT_RESTART"

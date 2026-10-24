@@ -23,6 +23,10 @@ object StorageKeys {
     const val ROOT_CONTROLLER_API_ADDRESS_ACTIVE = "root_controller_api_address_active"
     const val ROOT_TPROXY_PORT_ACTIVE = "root_tproxy_port_active"
     const val ROOT_LAST_STOP_CLEAN = "root_last_stop_clean"
+    // Tproxy 分应用名单快照（启动时由 TUN 黑白名单解析写入；attach 与 UID 重解析沿用）
+    const val ROOT_TPROXY_APP_MODE_ACTIVE = "root_tproxy_app_mode_active"
+    const val ROOT_TPROXY_APP_PACKAGES_ACTIVE = "root_tproxy_app_packages_active"
+    const val ROOT_TPROXY_APP_USERS_ACTIVE = "root_tproxy_app_users_active"
 
     // 启动时刻的 boot session 标记，用于 reopen 重连前识别设备是否重启过（重启会杀死 root
     // mihomo，不能把过期 PID 误当"仍存活"）。判定逻辑见 [BootSession]

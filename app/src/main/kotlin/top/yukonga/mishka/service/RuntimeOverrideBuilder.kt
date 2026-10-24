@@ -2,11 +2,16 @@ package top.yukonga.mishka.service
 
 import android.content.Context
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.intOrNull
 import top.yukonga.mishka.domain.model.ConfigurationOverride
 import top.yukonga.mishka.domain.model.DnsOverride
 import top.yukonga.mishka.domain.model.ProfileOverride
+import top.yukonga.mishka.custom.runtime.TproxyAppFilter
 import top.yukonga.mishka.domain.model.TunOverride
 import top.yukonga.mishka.platform.PlatformStorage
 import top.yukonga.mishka.platform.StorageKeys
@@ -347,20 +352,10 @@ object RuntimeOverrideBuilder {
 
         val profileHasPackageFilter = profileTun?.includePackage != null || profileTun?.excludePackage != null
         val appHasPackageFilter = userTun?.includePackage != null || userTun?.excludePackage != null
-        var generatedInclude: List<String>? = null
-        var generatedExclude: List<String>? = null
-        if (!profileHasPackageFilter && !appHasPackageFilter) {
-            val selfPkg = context.packageName
-            val proxyMode = parseAppProxyMode(storage.getString(StorageKeys.APP_PROXY_MODE, AppProxyMode.AllowAll.name))
-            val packages = storage.getStringSet(StorageKeys.APP_PROXY_PACKAGES, emptySet())
-            when (proxyMode) {
-                AppProxyMode.AllowSelected -> {
-                    val filtered = packages.filter { it != selfPkg }
-                    generatedInclude = if (filtered.isNotEmpty()) filtered else listOf("-")
-                }
-                AppProxyMode.DenySelected -> generatedExclude = (packages + selfPkg).distinct()
-                AppProxyMode.AllowAll -> generatedExclude = listOf(selfPkg)
-            }
+        val (generatedInclude, generatedExclude) = if (!profileHasPackageFilter && !appHasPackageFilter) {
+            appProxyFallbackFilter(context, storage)
+        } else {
+            null to null
         }
 
         val device = effectiveRootTunDevice?.takeIf { it.isNotBlank() }
@@ -429,6 +424,65 @@ object RuntimeOverrideBuilder {
             gso = user.gso ?: defaults.gso,
             gsoMaxSize = user.gsoMaxSize ?: defaults.gsoMaxSize,
         )
+    }
+
+    /**
+     * 分应用代理页（APP_PROXY_*）的兜底名单，返回 (include, exclude)。TUN 与 Tproxy 共用，保证两种模式语义一致。
+     */
+    private fun appProxyFallbackFilter(context: Context, storage: PlatformStorage): Pair<List<String>?, List<String>?> {
+        val selfPkg = context.packageName
+        val proxyMode = parseAppProxyMode(storage.getString(StorageKeys.APP_PROXY_MODE, AppProxyMode.AllowAll.name))
+        val packages = storage.getStringSet(StorageKeys.APP_PROXY_PACKAGES, emptySet())
+        return when (proxyMode) {
+            // 空列表时用无效包名占位，确保不代理任何应用
+            AppProxyMode.AllowSelected -> {
+                val filtered = packages.filter { it != selfPkg }
+                (if (filtered.isNotEmpty()) filtered else listOf("-")) to null
+            }
+            AppProxyMode.DenySelected -> null to (packages + selfPkg).distinct()
+            AppProxyMode.AllowAll -> null to listOf(selfPkg)
+        }
+    }
+
+    /**
+     * Tproxy 分应用名单。来源与 RootTun 完全一致：profile 的 tun 段 → 用户 override 的 tun → 分应用代理页兜底；
+     * 区别只在落点：RootTun 交给 mihomo include/exclude-package，Tproxy 由 iptables uid-owner 实现。
+     * [profileTunElement] 为 profile 的 tun 段（JSON）；传 null 时只看分应用代理页（与旧版行为一致）。
+     */
+    internal fun resolveTproxyAppFilter(
+        context: Context,
+        userTun: TunOverride?,
+        profileTunElement: JsonElement?,
+        preferUserTunOverrides: Boolean,
+    ): TproxyAppFilter {
+        val profileTun = profileTunElement?.let {
+            runCatching { json.decodeFromJsonElement<TunOverride>(it) }.getOrNull()
+        }
+        val hasTunFilter = profileTun?.includePackage != null || profileTun?.excludePackage != null ||
+            userTun?.includePackage != null || userTun?.excludePackage != null
+        val (include, exclude) = if (hasTunFilter) {
+            pickTunList(preferUserTunOverrides, profileTun?.includePackage, userTun?.includePackage) to
+                pickTunList(preferUserTunOverrides, profileTun?.excludePackage, userTun?.excludePackage)
+        } else {
+            appProxyFallbackFilter(context, PlatformStorage(context))
+        }
+        val users = profileTunElement?.let { readAndroidUsers(it) }.orEmpty()
+        return TproxyAppFilter.pick(include, exclude, users)
+    }
+
+    private fun pickTunList(preferUser: Boolean, profileValue: List<String>?, appValue: List<String>?): List<String>? =
+        when {
+            preferUser && appValue != null -> appValue
+            profileValue != null -> profileValue
+            appValue != null -> appValue
+            else -> null
+        }
+
+    /** profile tun 段里的 include-android-user（数组或单个数字），用于把 UID 展开到其它安卓用户。 */
+    private fun readAndroidUsers(tun: JsonElement): List<Int> {
+        val field = (tun as? JsonObject)?.get("include-android-user") ?: return emptyList()
+        val items = (field as? JsonArray)?.toList() ?: listOf(field)
+        return items.mapNotNull { (it as? JsonPrimitive)?.intOrNull }.filter { it >= 0 }.distinct()
     }
 
     private fun parseAppProxyMode(name: String): AppProxyMode =
