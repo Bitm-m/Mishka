@@ -76,7 +76,7 @@ jobs:
           } >> .git/info/exclude
           git config submodule.mihomo.ignore all
           SHA="$(git -C mihomo rev-parse --short=8 HEAD)"
-          echo "MIHOMO_VERSION=alpha-smart-${SHA}-with-at" >> "$GITHUB_ENV"
+          echo "MIHOMO_VERSION=alpha-smart-${SHA}-zero" >> "$GITHUB_ENV"
 
       - name: Decode Android signing key
         env:
