@@ -18670,6 +18670,19 @@ index 8f14fe7..12bf668 100644
  
      // 节点单列显示，默认 false（每行 2 个）
      const val PROXY_NODE_SINGLE_COLUMN = "proxy_node_single_column"
+diff --git a/app/src/main/kotlin/top/yukonga/mishka/platform/PlatformSystemInfo.kt b/app/src/main/kotlin/top/yukonga/mishka/platform/PlatformSystemInfo.kt
+index 7d6af24..5df8640 100644
+--- a/app/src/main/kotlin/top/yukonga/mishka/platform/PlatformSystemInfo.kt
++++ b/app/src/main/kotlin/top/yukonga/mishka/platform/PlatformSystemInfo.kt
+@@ -47,7 +47,7 @@ class PlatformSystemInfo(context: Context) {
+                     if (!intf.isUp || intf.isLoopback) return NetworkInfoData()
+                     networkInfo(intf.name, intf.inetAddresses.iterator(), isTun = true)
+                 }
+-                TunMode.RootTproxy -> {
++                TunMode.RootTproxy, TunMode.RootEbpf -> {
+                     val network = connectivityManager.activeNetwork ?: return NetworkInfoData()
+                     val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return NetworkInfoData()
+                     if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) return NetworkInfoData()
 diff --git a/app/src/main/kotlin/top/yukonga/mishka/platform/ProxyServiceController.kt b/app/src/main/kotlin/top/yukonga/mishka/platform/ProxyServiceController.kt
 index 6c81c2f..061fca6 100644
 --- a/app/src/main/kotlin/top/yukonga/mishka/platform/ProxyServiceController.kt
