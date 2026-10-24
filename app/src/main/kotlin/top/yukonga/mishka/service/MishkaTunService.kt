@@ -183,10 +183,12 @@ class MishkaTunService : VpnService() {
                     .trim()
                     .takeIf { it.isNotEmpty() }
                     ?: ConfigGenerator.resolveRootTunDevice(userOverride, null, storage)
-                // ROOT 孤儿仍可能持有路由；切回 VPN 前保留既有清理和缓存回写。
+                // ROOT 孤儿仍可能持有路由；仅当存在持久化 ROOT PID 或上次 ROOT 未正常停机时才执行恢复清理，
+                // 避免在已 root 设备上每次启动 VPN 都跑 4 轮 su + iptables teardown（耗时 2~4s）。
                 val hadRootPid = storage.getString(StorageKeys.ROOT_MIHOMO_PID, "").isNotEmpty()
                 val hasRoot = storage.getString(StorageKeys.HAS_ROOT, "false") == "true"
-                if (hadRootPid || hasRoot) {
+                val rootStopClean = storage.getString(StorageKeys.ROOT_LAST_STOP_CLEAN, "true") == "true"
+                if (hadRootPid || (hasRoot && !rootStopClean)) {
                     RootHelper.cleanupOrphanedMihomo(tunDevice = residualTun)
                     RootTetherHijacker.teardown()
                     RootTproxyApplier.teardown()
@@ -197,6 +199,9 @@ class MishkaTunService : VpnService() {
                     storage.putString(StorageKeys.ROOT_ACTIVE_SUBSCRIPTION_ID, "")
                     storage.putString(StorageKeys.ROOT_TUN_DEVICE_ACTIVE, "")
                     storage.putString(StorageKeys.ROOT_CONTROLLER_API_ADDRESS_ACTIVE, "")
+                    storage.putString(StorageKeys.ROOT_LAST_STOP_CLEAN, "true")
+                } else if (hasRoot) {
+                    RootRuntimeCache.releaseAll(this@MishkaTunService, subscriptionRepository)
                 }
 
                 val profileModeConfig = ActiveProfileRuntimeConfig.prepare(

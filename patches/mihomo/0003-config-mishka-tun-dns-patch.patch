@@ -28,13 +28,33 @@ stay compilable without mishka.
 https://github.com/YuKongA/mihomo/commit/addd66b
 https://github.com/YuKongA/mihomo/commit/4c724df
 ---
- config/config.go       |   8 +++
- config/patch_mishka.go | 118 +++++++++++++++++++++++++++++++++++++++++
- 2 files changed, 126 insertions(+)
- create mode 100644 config/patch_mishka.go
+ component/resource/fetcher.go |   8 +++
+ config/config.go              |   8 +++
+ config/patch_mishka.go        | 118 ++++++++++++++++++++++++++++++++++++++++++
+ hub/executor/executor.go      |   2 +-
+ 4 files changed, 135 insertions(+), 1 deletion(-)
 
+diff --git a/component/resource/fetcher.go b/component/resource/fetcher.go
+index accb6c4ca8ede592419b5b9ddaec26d6e74010de..001881dff84212cb0c5c85400e47e46839ece2f8 100644
+--- a/component/resource/fetcher.go
++++ b/component/resource/fetcher.go
+@@ -109,6 +109,14 @@ func (f *Fetcher[V]) Initial() (V, error) {
+ 	}
+ 
+ 	// parse local file error, fallback to remote
++	if f.vehicle.Type() == P.HTTP {
++		if f.interval > 0 {
++			return lo.Empty[V](), f.startPullLoop(true)
++		}
++		go f.updateWithLog()
++		return lo.Empty[V](), nil
++	}
++
+ 	contents, _, updateErr := f.Update()
+ 
+ 	// start the pull loop even if f.Update() failed
 diff --git a/config/config.go b/config/config.go
-index 3a14bc5..ba86b9e 100644
+index 7e4ea9cd1216d0a6daf4c688c9fd57fd0f7509a4..e63c6410c305462d1e70ba78d20374865f496693 100644
 --- a/config/config.go
 +++ b/config/config.go
 @@ -487,6 +487,10 @@ type RawConfig struct {
@@ -61,7 +81,7 @@ index 3a14bc5..ba86b9e 100644
  
 diff --git a/config/patch_mishka.go b/config/patch_mishka.go
 new file mode 100644
-index 0000000..7a42efd
+index 0000000000000000000000000000000000000000..7a42efd56f8496c618cc6a04b13f0af5d9343898
 --- /dev/null
 +++ b/config/patch_mishka.go
 @@ -0,0 +1,118 @@
@@ -183,6 +203,16 @@ index 0000000..7a42efd
 +		}
 +	}
 +}
--- 
-2.47.3
-
+diff --git a/hub/executor/executor.go b/hub/executor/executor.go
+index 2a1cec6ca58a6739d76dcb32e5602c56baa05d5c..ec80d92faceb5d5022fea1924c23b1823cfb9ea1 100644
+--- a/hub/executor/executor.go
++++ b/hub/executor/executor.go
+@@ -414,7 +414,7 @@ func updateUpdater(cfg *config.Config) {
+ 
+ 	controller := cfg.Controller
+ 	updater.DefaultUiUpdater = updater.NewUiUpdater(controller.ExternalUI, controller.ExternalUIURL, controller.ExternalUIName)
+-	updater.DefaultUiUpdater.AutoDownloadUI()
++	go updater.DefaultUiUpdater.AutoDownloadUI()
+ }
+ 
+ //go:linkname temporaryUpdateGeneral github.com/metacubex/mihomo/config.temporaryUpdateGeneral
