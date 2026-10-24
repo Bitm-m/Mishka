@@ -26,6 +26,28 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Prepare custom mihomo kernel
+        run: |
+          set -euo pipefail
+          BASE_COMMIT="$(sed -n 's/^base_commit=//p' patches/mihomo/BASELINE.txt | head -1)"
+          rm -rf mihomo
+          git clone --single-branch --branch Alpha https://github.com/jieluojun/mihomo.git mihomo
+          if [ -n "$BASE_COMMIT" ]; then
+            if ! git -C mihomo cat-file -e "${BASE_COMMIT}^{commit}" 2>/dev/null; then
+              git -C mihomo fetch --quiet origin "+${BASE_COMMIT}:refs/mishka-custom/base" || true
+            fi
+            if git -C mihomo cat-file -e "${BASE_COMMIT}^{commit}" 2>/dev/null; then
+              git -C mihomo checkout -q "$BASE_COMMIT"
+            fi
+          fi
+          for p in patches/mihomo/[0-9]*.patch; do
+            echo "Applying $p ..."
+            git -C mihomo apply "$p" || git -C mihomo apply --3way "$p"
+          done
+          git config submodule.mihomo.ignore all
+          SHA="$(git -C mihomo rev-parse --short=8 HEAD)"
+          echo "MIHOMO_VERSION=alpha-smart-${SHA}-zero" >> "$GITHUB_ENV"
+
       - name: Set up JDK
         uses: actions/setup-java@v6
         with:
@@ -38,23 +60,36 @@ jobs:
           go-version-file: app/src/main/native/mishka_core/go.mod
           cache-dependency-path: app/src/main/native/mishka_core/go.sum
 
+      - name: Sync Go module dependencies
+        run: |
+          cd app/src/main/native/mishka_core
+          go mod tidy
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
       - name: Decode Android signing key
-        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        if: ${{ github.event_name != 'pull_request' }}
         env:
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-        run: echo "$SIGNING_KEY" | base64 -d > keystore.jks
+        run: |
+          if [ -n "$SIGNING_KEY" ]; then
+            echo "$SIGNING_KEY" | base64 -d > keystore.jks
+          fi
 
       - name: Download GeoIP files
         run: ./gradlew :app:downloadGeoFiles
 
       - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug
+        run: ./gradlew "-Pmihomo.version=${MIHOMO_VERSION}" :app:assembleDebug
+        env:
+          KEYSTORE_PATH: "${{ github.workspace }}/keystore.jks"
+          KEYSTORE_PASS: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Build Release APK
-        run: ./gradlew :app:assembleRelease
+        run: ./gradlew "-Pmihomo.version=${MIHOMO_VERSION}" :app:assembleRelease
         env:
           KEYSTORE_PATH: "${{ github.workspace }}/keystore.jks"
           KEYSTORE_PASS: ${{ secrets.KEY_STORE_PASSWORD }}
