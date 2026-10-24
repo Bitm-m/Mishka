@@ -36,6 +36,9 @@ private val BuiltInOutboundNames = setOf("direct", "reject", "reject-drop", "pas
 /** 内置出站的类型字段（/proxies 的 `type`）；只在节点被改名、名字兜不住时起作用。 */
 private val BuiltInOutboundTypes = setOf("direct", "reject", "rejectdrop", "pass", "compatible")
 
+/** 不参与拨测、无独立延迟历史的内置出站类型（空组 COMPATIBLE 兜底或阻断/直通策略）。 */
+private val NonTestableOutboundTypes = setOf("reject", "rejectdrop", "pass", "compatible")
+
 /**
  * 是否 mihomo 内置出站。「隐藏不可用」按 delay == -1（healthcheck 超时）过滤，而内置出站
  * 从不参与拨测——history 恒为 0，于是一开开关它们就整组消失，偏偏 DIRECT / REJECT / GLOBAL
@@ -276,17 +279,16 @@ class ProxyViewModel(
         viewModelScope.launch {
             repo.selectProxy(group, proxy).onSuccess {
                 if (repository !== repo) return@onSuccess
+                val updated = _uiState.value.groups.map {
+                    when {
+                        it.name != group -> it
+                        // 非 Selector 组的选中即固定，两个字段同步写
+                        it.isSelector -> it.copy(now = proxy)
+                        else -> it.copy(now = proxy, fixed = proxy)
+                    }
+                }
                 _uiState.value = _uiState.value.copy(
-                    groups = _uiState.value.groups
-                        .map {
-                            when {
-                                it.name != group -> it
-                                // 非 Selector 组的选中即固定，两个字段同步写
-                                it.isSelector -> it.copy(now = proxy)
-                                else -> it.copy(now = proxy, fixed = proxy)
-                            }
-                        }
-                        .toPersistentList()
+                    groups = syncNestedGroupDelays(updated),
                 )
                 saveSelection(group, proxy)
                 if (shouldCloseConnections) {
@@ -334,35 +336,46 @@ class ProxyViewModel(
                 if (repository !== repo) return@launch
                 val delayMap = delayResult.getOrNull() ?: emptyMap()
 
-                val updatedGroups = _uiState.value.groups.map { g ->
-                    if (g.name == group) {
+                val currentGroups = _uiState.value.groups
+                val groupByName = currentGroups.associateBy { it.name }
+                val effectiveDelays = mutableMapOf<String, Int>()
+                groupUi.all.forEach { nodeName ->
+                    val d = delayMap[nodeName]
+                    val measured = when {
+                        d != null && d > 0 -> d
+                        delayResult.isSuccess -> -1
+                        else -> null
+                    }
+                    if (measured != null) {
+                        effectiveDelays[nodeName] = measured
+                        var cur = groupByName[nodeName]?.now.orEmpty()
+                        var steps = groupByName.size + 1
+                        while (cur.isNotEmpty() && steps-- > 0) {
+                            effectiveDelays.putIfAbsent(cur, measured)
+                            cur = groupByName[cur]?.now.orEmpty()
+                        }
+                    }
+                }
+                delayMap.forEach { (nodeName, d) ->
+                    if (d > 0) effectiveDelays[nodeName] = d
+                }
+
+                val updatedGroups = currentGroups.map { g ->
+                    if (g.name == group || g.all.any { it in effectiveDelays }) {
                         val newDelays = g.delays.toMutableMap()
                         g.all.forEach { nodeName ->
-                            val d = delayMap[nodeName]
-                            if (d != null && d > 0) {
+                            val d = effectiveDelays[nodeName]
+                            if (d != null) {
                                 newDelays[nodeName] = d
-                            } else if (delayResult.isSuccess) {
-                                // 未返回或 0 表示超时/失败
-                                newDelays[nodeName] = -1
                             }
                         }
                         g.copy(delays = newDelays.toPersistentMap())
                     } else {
-                        val affected = g.all.filter { it in delayMap }
-                        if (affected.isNotEmpty()) {
-                            val newDelays = g.delays.toMutableMap()
-                            affected.forEach { nodeName ->
-                                val d = delayMap[nodeName]
-                                if (d != null && d > 0) newDelays[nodeName] = d
-                            }
-                            g.copy(delays = newDelays.toPersistentMap())
-                        } else {
-                            g
-                        }
+                        g
                     }
-                }.toPersistentList()
+                }
 
-                _uiState.value = _uiState.value.copy(groups = updatedGroups)
+                _uiState.value = _uiState.value.copy(groups = syncNestedGroupDelays(updatedGroups))
 
                 // 非 Selector 组恢复固定的节点
                 if (currentFixed != null) {
@@ -396,18 +409,32 @@ class ProxyViewModel(
                 if (repository !== repo) return@launch
                 val delayValue = result.getOrNull()?.delay?.takeIf { it > 0 } ?: -1
 
-                // 单节点就地更新延迟，不全量重拉配置
-                val updatedGroups = _uiState.value.groups.map { group ->
-                    if (nodeName in group.all) {
+                // 单节点就地更新延迟（若测的是嵌套子组，同步更新其当前出口节点及上层父组）
+                val currentGroups = _uiState.value.groups
+                val groupByName = currentGroups.associateBy { it.name }
+                val targetNames = mutableSetOf(nodeName)
+                var cur = groupByName[nodeName]?.now.orEmpty()
+                var steps = groupByName.size + 1
+                while (cur.isNotEmpty() && steps-- > 0) {
+                    targetNames.add(cur)
+                    cur = groupByName[cur]?.now.orEmpty()
+                }
+
+                val updatedGroups = currentGroups.map { group ->
+                    if (group.all.any { it in targetNames }) {
                         val newDelays = group.delays.toMutableMap()
-                        newDelays[nodeName] = delayValue
+                        group.all.forEach { member ->
+                            if (member in targetNames) {
+                                newDelays[member] = delayValue
+                            }
+                        }
                         group.copy(delays = newDelays.toPersistentMap())
                     } else {
                         group
                     }
-                }.toPersistentList()
+                }
 
-                _uiState.value = _uiState.value.copy(groups = updatedGroups)
+                _uiState.value = _uiState.value.copy(groups = syncNestedGroupDelays(updatedGroups))
             } finally {
                 _uiState.value = _uiState.value.copy(
                     testingNodes = (_uiState.value.testingNodes - nodeName).toPersistentSet(),
@@ -470,19 +497,67 @@ class ProxyViewModel(
         private const val TAG = "ProxyViewModel"
     }
 
+    /** 同步所有嵌套子组在父组中的显示延迟，使子组测速或切换节点后父组立即反映最新延迟。 */
+    private fun syncNestedGroupDelays(groups: List<ProxyGroupUi>): ImmutableList<ProxyGroupUi> {
+        val groupByName = groups.associateBy { it.name }
+        fun resolveGroupEffectiveDelay(groupName: String): Pair<Boolean, Int?> {
+            var curGroup = groupByName[groupName] ?: return false to null
+            var remaining = groupByName.size + 1
+            while (remaining-- > 0) {
+                val now = curGroup.now
+                if (now.isEmpty()) return false to null
+                val nextGroup = groupByName[now]
+                if (nextGroup == null || now in curGroup.delays) {
+                    val d = curGroup.delays[now]
+                    if (d != null || nextGroup == null) {
+                        return (now in curGroup.all) to d
+                    }
+                }
+                curGroup = nextGroup
+            }
+            return false to null
+        }
+
+        return groups.map { g ->
+            var changed = false
+            val newDelays = g.delays.toMutableMap()
+            g.all.forEach { member ->
+                if (member in groupByName) {
+                    val (hasMemberNow, resolved) = resolveGroupEffectiveDelay(member)
+                    if (resolved != null && newDelays[member] != resolved) {
+                        newDelays[member] = resolved
+                        changed = true
+                    } else if (resolved == null && hasMemberNow && member in newDelays) {
+                        newDelays.remove(member)
+                        changed = true
+                    }
+                }
+            }
+            if (changed) g.copy(delays = newDelays.toPersistentMap()) else g
+        }.toPersistentList()
+    }
+
     /** 子组沿 now 取当前出口；步数上限防配置环。 */
     private fun resolveDelay(name: String, allProxies: Map<String, ProxyNode>): Int? {
         var current = name
         var remaining = allProxies.size + 1
+        var fallbackDelay: Int? = null
         while (remaining-- > 0) {
-            val proxy = allProxies[current] ?: return null
-            if (proxy.now.isNotEmpty()) {
-                current = proxy.now
-                continue
+            val proxy = allProxies[current] ?: return fallbackDelay
+            val last = proxy.history.lastOrNull()
+            val selfDelay = if (last != null) (if (last.delay > 0) last.delay else -1) else null
+            if (proxy.now.isEmpty()) {
+                return selfDelay ?: fallbackDelay
             }
-            val delay = proxy.history.lastOrNull()?.delay ?: return null
-            return if (delay > 0) delay else -1
+            val next = allProxies[proxy.now]
+            if (next == null || next.type.lowercase() in NonTestableOutboundTypes) {
+                return selfDelay ?: fallbackDelay
+            }
+            if (selfDelay != null) {
+                fallbackDelay = selfDelay
+            }
+            current = proxy.now
         }
-        return null
+        return fallbackDelay
     }
 }

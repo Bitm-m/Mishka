@@ -940,7 +940,7 @@ private fun ProxyNodeCard(
                         )
                         Spacer(Modifier.width(4.dp))
                     }
-                    // 仅选中项开跑马灯，其余省略号截断
+                    // 节点名不截断：超出可用宽度时走跑马灯滚动，短名保持原宽（fill = false）
                     Text(
                         text = name,
                         fontSize = 13.sp,
@@ -948,19 +948,9 @@ private fun ProxyNodeCard(
                         color = MiuixTheme.colorScheme.onSurface,
                         maxLines = 1,
                         softWrap = false,
-                        overflow = if (isSelected) TextOverflow.Clip else TextOverflow.Ellipsis,
                         modifier = Modifier
                             .weight(1f, fill = false)
-                            .then(
-                                if (isSelected) {
-                                    Modifier.basicMarquee(
-                                        iterations = Int.MAX_VALUE,
-                                        initialDelayMillis = 1500,
-                                    )
-                                } else {
-                                    Modifier
-                                }
-                            ),
+                            .basicMarquee(iterations = Int.MAX_VALUE),
                     )
                 }
                 Spacer(Modifier.width(6.dp))

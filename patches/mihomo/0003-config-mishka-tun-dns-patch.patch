@@ -28,12 +28,132 @@ stay compilable without mishka.
 https://github.com/YuKongA/mihomo/commit/addd66b
 https://github.com/YuKongA/mihomo/commit/4c724df
 ---
- component/resource/fetcher.go |   8 +++
- config/config.go              |   8 +++
- config/patch_mishka.go        | 118 ++++++++++++++++++++++++++++++++++++++++++
- hub/executor/executor.go      |   2 +-
- 4 files changed, 135 insertions(+), 1 deletion(-)
+ adapter/adapter.go               |  79 ++++++++++++++++----------
+ adapter/outboundgroup/urltest.go |   2 +
+ component/resource/fetcher.go    |   8 +++
+ config/config.go                 |   8 +++
+ config/patch_mishka.go           | 118 +++++++++++++++++++++++++++++++++++++++
+ hub/executor/executor.go         |   2 +-
+ 6 files changed, 188 insertions(+), 29 deletions(-)
 
+diff --git a/adapter/adapter.go b/adapter/adapter.go
+index 129f01e89ade79d9f7357a3210da401a98e758ec..7a109cc9d2e9df367082b9ddbc7a0007a47b1e2e 100644
+--- a/adapter/adapter.go
++++ b/adapter/adapter.go
+@@ -176,42 +176,50 @@ func (p *Proxy) MarshalJSON() ([]byte, error) {
+ 	return json.Marshal(mapping)
+ }
+ 
++func (p *Proxy) recordDelayHistory(url string, alive, satisfied bool, t uint16, now time.Time) {
++	record := C.DelayHistory{Time: now}
++	if alive {
++		record.Delay = t
++	}
++
++	p.alive.Store(alive)
++	p.history.Put(record)
++	if p.history.Len() > defaultHistoriesNum {
++		p.history.Pop()
++	}
++
++	state, _ := p.extra.LoadOrStoreFn(url, func() *internalProxyState {
++		return &internalProxyState{
++			history: queue.New[C.DelayHistory](defaultHistoriesNum),
++			alive:   atomic.NewBool(true),
++		}
++	})
++
++	if !satisfied {
++		record.Delay = 0
++		alive = false
++	}
++
++	state.alive.Store(alive)
++	state.history.Put(record)
++	if state.history.Len() > defaultHistoriesNum {
++		state.history.Pop()
++	}
++}
++
+ // URLTest get the delay for the specified URL
+ // implements C.Proxy
+ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.IntRanges[uint16]) (t uint16, err error) {
+ 	var satisfied bool
++	var targets []*Proxy
+ 
+ 	defer func() {
+ 		alive := err == nil
+-		record := C.DelayHistory{Time: time.Now()}
+-		if alive {
+-			record.Delay = t
+-		}
+-
+-		p.alive.Store(alive)
+-		p.history.Put(record)
+-		if p.history.Len() > defaultHistoriesNum {
+-			p.history.Pop()
++		now := time.Now()
++		p.recordDelayHistory(url, alive, satisfied, t, now)
++		for _, ap := range targets {
++			ap.recordDelayHistory(url, alive, satisfied, t, now)
+ 		}
+-
+-		state, _ := p.extra.LoadOrStoreFn(url, func() *internalProxyState {
+-			return &internalProxyState{
+-				history: queue.New[C.DelayHistory](defaultHistoriesNum),
+-				alive:   atomic.NewBool(true),
+-			}
+-		})
+-
+-		if !satisfied {
+-			record.Delay = 0
+-			alive = false
+-		}
+-
+-		state.alive.Store(alive)
+-		state.history.Put(record)
+-		if state.history.Len() > defaultHistoriesNum {
+-			state.history.Pop()
+-		}
+-
+ 	}()
+ 
+ 	unifiedDelay := UnifiedDelay.Load()
+@@ -221,6 +229,21 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
+ 		return
+ 	}
+ 
++	for step, cur := 0, p.Unwrap(&addr, false); step < 16 && cur != nil && cur != p; step++ {
++		if ap, ok := cur.(*Proxy); ok {
++			switch ap.Type() {
++			case C.Compatible, C.Reject, C.RejectDrop, C.Pass:
++			default:
++				targets = append(targets, ap)
++			}
++		}
++		next := cur.Unwrap(&addr, false)
++		if next == cur {
++			break
++		}
++		cur = next
++	}
++
+ 	start := time.Now()
+ 	instance, err := p.DialContext(ctx, &addr)
+ 	if err != nil {
+diff --git a/adapter/outboundgroup/urltest.go b/adapter/outboundgroup/urltest.go
+index 82366ad68fd8c056a22c937b43c3956154fe0ce4..341ada7b4c7a8e75af6ea1c94ac935e5f562f5ff 100644
+--- a/adapter/outboundgroup/urltest.go
++++ b/adapter/outboundgroup/urltest.go
+@@ -224,6 +224,8 @@ func (u *URLTest) Proxies() []C.Proxy {
+ }
+ 
+ func (u *URLTest) URLTest(ctx context.Context, url string, expectedStatus utils.IntRanges[uint16]) (map[string]uint16, error) {
++	u.fastSingle.Reset()
++	defer u.fastSingle.Reset()
+ 	return u.GroupBase.URLTest(ctx, u.testUrl, expectedStatus)
+ }
+ 
 diff --git a/component/resource/fetcher.go b/component/resource/fetcher.go
 index accb6c4ca8ede592419b5b9ddaec26d6e74010de..001881dff84212cb0c5c85400e47e46839ece2f8 100644
 --- a/component/resource/fetcher.go
