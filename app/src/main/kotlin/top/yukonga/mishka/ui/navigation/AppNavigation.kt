@@ -46,6 +46,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
@@ -65,6 +66,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import top.yukonga.mishka.DeepLinkImportRequest
+import top.yukonga.mishka.PanelActivity
 import top.yukonga.mishka.R
 import top.yukonga.mishka.platform.BootStartManager
 import top.yukonga.mishka.platform.FilePicker
@@ -561,6 +563,8 @@ private fun MainPage(
 ) {
     val homeUiState = homeViewModel?.uiState?.collectAsStateWithLifecycle()?.value ?: HomeUiState()
     val selectedPage = mainPagerState.selectedPage
+    // 外部面板走独立 Activity（见 PanelActivity）：这里只负责起 intent
+    val context = LocalContext.current
     val interceptPagerGestures =
         themeConfig.pagerInterceptionMode == PagerInterceptionMode.CrossAxisInterceptor
     val nativePagerNestedScrollConnection = PagerDefaults.pageNestedScrollConnection(
@@ -603,6 +607,7 @@ private fun MainPage(
                     onNavigateProvider = { navigator.push(Route.Provider) },
                     onNavigateConnection = { navigator.push(Route.Connection) },
                     onNavigateDnsQuery = { navigator.push(Route.DnsQuery) },
+                    onNavigatePanel = { context.startActivity(PanelActivity.createIntent(context)) },
                     onStartProxy = { homeViewModel?.startProxy() },
                     onSwitchMode = { homeViewModel?.switchMode(it) },
                     onSwitchTunStack = { homeViewModel?.switchTunStack(it) },

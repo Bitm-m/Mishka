@@ -31,6 +31,7 @@ import io.github.g00fy2.quickie.config.ScannerConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.android.ext.android.get
+import top.yukonga.mishka.custom.panel.WebViewPreloader
 import top.yukonga.mishka.data.api.MihomoConnectionManager
 import top.yukonga.mishka.data.repository.ProfileProcessor
 import top.yukonga.mishka.data.repository.SubscriptionProxyResolver
@@ -104,6 +105,9 @@ class MainActivity : ComponentActivity() {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         splashScreen.setKeepOnScreenCondition { !contentReady }
+        // 面板 WebView 预热（box.app 同款）：后台加载 Chromium provider + 空闲时预建实例，
+        // 面板每次进入都新建 WebView，预热把 new WebView() 的 ~500ms 冷启压掉
+        WebViewPreloader.preload(this)
 
         consumedDeepLinkNonce = savedInstanceState?.getString(STATE_DEEPLINK_NONCE)
         acceptDeepLinkImport(intent)
