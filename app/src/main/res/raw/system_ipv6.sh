@@ -191,13 +191,11 @@ apn_lock_release() {
   return 0
 }
 
-# 改协议后需重新附着数据才生效：后台自动开关一次移动数据
-apn_reattach() {
-  command -v svc >/dev/null 2>&1 || { log "WARN 无 svc，请手动开关一次飞行模式使 APN 协议生效"; return 0; }
-  log "重新附着数据（svc data off/on）"
-  ( svc data disable >/dev/null 2>&1; sleep 2; svc data enable >/dev/null 2>&1 ) </dev/null >/dev/null 2>&1 &
-  return 0
-}
+# 不手动开关移动数据让新 APN 协议生效：content update 改动 carriers 后，框架的
+# DataProfileManager 会监听到 APN 库变化并重估已连接的数据网络，协议属于
+# ApnSetting 的比较字段，变化即判定 DATA_PROFILE_INVALID 并拆网重建——改库本身
+# 就会让移动数据重连一次。脚本再 svc data disable/enable 等于第二次重连，
+# 一次开关切换在状态栏表现为移动数据掉线两次。故这里只改库，不做重附着。
 
 # 「系统 IPv6=关」：上网 APN 协议改为 IP（幂等；只写漂移的行；跳过 IMS）
 # 写入后不信任 content 的输出文字，而是重新查询同一行，以实际值为准。
@@ -226,7 +224,6 @@ apn_apply_locked() {
   done <<APN_ROWS_END
 $_rows
 APN_ROWS_END
-  [ "$_changed" = "1" ] && apn_reattach
   [ "$_fail" = "0" ]
 }
 
@@ -239,6 +236,8 @@ apn_apply() {
 }
 
 # 关态周期校验：首选 APN 若被系统或运营商写回 IPv4/IPv6，则重新改写（每 60 秒一次，见 watch 循环）
+# 只改数据库：协议生效靠框架监听 APN 库变化后自行拆建数据网络（见 apn_apply 前的说明），
+# watchdog 不做任何断网动作，避免一次切换后紧接着第二次重连。
 apn_drift_check() {
   _rows=$(apn_rows)
   [ -n "$_rows" ] || return 0
@@ -288,7 +287,6 @@ $_rows
 APN_RESTORE_END
     fi
   fi
-  [ "$_changed" = "1" ] && apn_reattach
   return 0
 }
 
@@ -396,7 +394,9 @@ sync_once() {
   fi
 
   # 第二步（蜂窝 APN 改写 + 开启时 ndc 通知）：
-  # once 模式下放后台异步执行，使开关切换毫秒级返回；watch 循环内顺序执行
+  # once 模式下放后台异步执行，使开关切换毫秒级返回；watch 循环内顺序执行。
+  # 这里只改 APN 数据库，不手动重附着数据：改库会触发框架重估并拆建数据网络
+  # 让新协议生效（恰好一次重连）；watch 的切网/漂移修复同理只改库。
   _post_sync() {
     if [ "$WANT" = "0" ]; then
       if [ "$_flip" = "1" ] || [ "$_netchg" = "1" ]; then apn_apply; fi
