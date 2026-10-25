@@ -90,24 +90,23 @@ data class ProxyUiState(
  */
 fun visibleProxyGroups(groups: List<ProxyGroupUi>, mode: String): List<ProxyGroupUi> {
     if (groups.isEmpty()) return groups
-    val global = groups.firstOrNull { it.name == ProxyViewModel.GLOBAL_GROUP }
-    return when {
-        mode == ProxyViewModel.MODE_GLOBAL && global != null -> {
-            val groupByName = groups.associateBy { it.name }
-            val visible = mutableListOf(global)
-            val seen = mutableSetOf(global.name)
-            var current = global
-            while (true) {
-                val next = groupByName[current.now] ?: break
-                if (!seen.add(next.name)) break
-                visible += next
-                current = next
-            }
-            visible
-        }
-        mode == ProxyViewModel.MODE_RULE -> groups.filterNot { it.name == ProxyViewModel.GLOBAL_GROUP }
-        else -> groups
+    if (mode == ProxyViewModel.MODE_RULE) {
+        return groups.filterNot { it.name == ProxyViewModel.GLOBAL_GROUP }
     }
+    if (mode != ProxyViewModel.MODE_GLOBAL) return groups
+
+    val global = groups.firstOrNull { it.name == ProxyViewModel.GLOBAL_GROUP } ?: return groups
+    val groupByName = groups.associateBy { it.name }
+    val visible = mutableListOf(global)
+    val seen = mutableSetOf(global.name)
+    var current: ProxyGroupUi = global
+    while (true) {
+        val next = groupByName[current.now] ?: break
+        if (!seen.add(next.name)) break
+        visible += next
+        current = next
+    }
+    return visible
 }
 
 class ProxyViewModel(
