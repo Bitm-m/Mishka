@@ -226,11 +226,12 @@ apn_apply_locked() {
   done <<APN_ROWS_END
 $_rows
 APN_ROWS_END
-  [ "$_changed" = "1" ] && apn_reattach
+  [ "$_changed" = "1" ] && [ "$_apn_reattach" = "1" ] && apn_reattach
   [ "$_fail" = "0" ]
 }
 
 apn_apply() {
+  _apn_reattach=${1:-1}
   apn_lock_acquire
   apn_apply_locked
   _apn_rc=$?
@@ -239,13 +240,15 @@ apn_apply() {
 }
 
 # 关态周期校验：首选 APN 若被系统或运营商写回 IPv4/IPv6，则重新改写（每 60 秒一次，见 watch 循环）
+# 只修数据库、不重附着：重附着只由开关翻转触发（见 _post_sync），否则运营商在重附着时
+# 写回协议会让 watchdog 紧接着再断一次网，一次切换变成两次重连。
 apn_drift_check() {
   _rows=$(apn_rows)
   [ -n "$_rows" ] || return 0
   _bad=$(echo "$_rows" | awk -F'|' '$1 != "" && tolower($5) !~ /ims/ && ($3 != "IP" || $4 != "IP") {print $1}')
   if [ -n "$_bad" ]; then
     log "APN 协议漂移（id=$(echo $_bad | tr '\n' ' ')），重新改写"
-    apn_apply
+    apn_apply 0
   fi
   return 0
 }
@@ -288,11 +291,12 @@ $_rows
 APN_RESTORE_END
     fi
   fi
-  [ "$_changed" = "1" ] && apn_reattach
+  [ "$_changed" = "1" ] && [ "$_apn_reattach" = "1" ] && apn_reattach
   return 0
 }
 
 apn_restore() {
+  _apn_reattach=${1:-1}
   apn_lock_acquire
   apn_restore_locked
   _apn_rc=$?
@@ -396,12 +400,16 @@ sync_once() {
   fi
 
   # 第二步（蜂窝 APN 改写 + 开启时 ndc 通知）：
-  # once 模式下放后台异步执行，使开关切换毫秒级返回；watch 循环内顺序执行
+  # once 模式下放后台异步执行，使开关切换毫秒级返回；watch 循环内顺序执行。
+  # 重附着只在开关翻转（_flip）时做：watch 因切网（_netchg）触发的修复只改数据库。
+  # 否则翻转后的重附着本身会改变路由指纹，下一拍 watch 又以切网为由改写并再次重附着，
+  # 一次切换让移动数据连续重连两次；数据库修正会在下次自然重连时生效，且翻转那次
+  # 重附着建立的会话用的已经是修正后的协议，不受影响。
   _post_sync() {
     if [ "$WANT" = "0" ]; then
-      if [ "$_flip" = "1" ] || [ "$_netchg" = "1" ]; then apn_apply; fi
+      if [ "$_flip" = "1" ]; then apn_apply 1; elif [ "$_netchg" = "1" ]; then apn_apply 0; fi
     else
-      if [ "$_flip" = "1" ]; then apn_restore; fi
+      if [ "$_flip" = "1" ]; then apn_restore 1; fi
     fi
 
     if [ "$WANT" = "1" ] && [ -n "$_changed" ]; then
