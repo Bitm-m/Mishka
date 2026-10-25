@@ -81,6 +81,35 @@ data class ProxyUiState(
     val mode: String = "",
 )
 
+/**
+ * 代理页实际展示的组。ViewModel 的 groups 保持完整（供恢复选择、测速与切换逻辑使用），
+ * 这里只决定卡片可见性：
+ * - 规则模式隐藏 GLOBAL 卡片；
+ * - 全局模式对齐 zashboard：只展示 GLOBAL，以及沿各组 now 逐级选中的组，直到选中普通节点为止；
+ * - 其它模式（直连或模式未知）保持完整列表。
+ */
+fun visibleProxyGroups(groups: List<ProxyGroupUi>, mode: String): List<ProxyGroupUi> {
+    if (groups.isEmpty()) return groups
+    val global = groups.firstOrNull { it.name == ProxyViewModel.GLOBAL_GROUP }
+    return when {
+        mode == ProxyViewModel.MODE_GLOBAL && global != null -> {
+            val groupByName = groups.associateBy { it.name }
+            val visible = mutableListOf(global)
+            val seen = mutableSetOf(global.name)
+            var current = global
+            while (true) {
+                val next = groupByName[current.now] ?: break
+                if (!seen.add(next.name)) break
+                visible += next
+                current = next
+            }
+            visible
+        }
+        mode == ProxyViewModel.MODE_RULE -> groups.filterNot { it.name == ProxyViewModel.GLOBAL_GROUP }
+        else -> groups
+    }
+}
+
 class ProxyViewModel(
     private val selectionDao: SelectionDao? = null,
     private val getActiveUuid: () -> String? = { null },
@@ -98,6 +127,12 @@ class ProxyViewModel(
     // 节点每行 1 个铺满宽度，关闭时每行 2 个
     private val _singleColumn = MutableStateFlow(loadInitialSingleColumn())
     val singleColumn: StateFlow<Boolean> = _singleColumn.asStateFlow()
+
+    // 代理组双排布局：开启后组卡片两列排列，点击组卡片以弹窗展开节点
+    private val _twoColumnGroups = MutableStateFlow(
+        storage?.getString(StorageKeys.PROXY_GROUP_TWO_COLUMN_LAYOUT, "false") == "true"
+    )
+    val twoColumnGroups: StateFlow<Boolean> = _twoColumnGroups.asStateFlow()
 
     private val _showGroupIcons = MutableStateFlow(
         storage?.getString(StorageKeys.PROXY_GROUP_SHOW_ICONS, "true") != "false"
@@ -146,6 +181,11 @@ class ProxyViewModel(
     fun updateShowGroupIcons(enabled: Boolean) {
         _showGroupIcons.value = enabled
         storage?.putString(StorageKeys.PROXY_GROUP_SHOW_ICONS, enabled.toString())
+    }
+
+    fun updateTwoColumnGroups(enabled: Boolean) {
+        _twoColumnGroups.value = enabled
+        storage?.putString(StorageKeys.PROXY_GROUP_TWO_COLUMN_LAYOUT, enabled.toString())
     }
 
     fun updateHideUnavailable(enabled: Boolean) {
@@ -492,6 +532,7 @@ class ProxyViewModel(
 
     companion object {
         const val GLOBAL_GROUP = "GLOBAL"
+        const val MODE_RULE = "rule"
         const val MODE_GLOBAL = "global"
         const val MODE_DIRECT = "direct"
         private const val TAG = "ProxyViewModel"

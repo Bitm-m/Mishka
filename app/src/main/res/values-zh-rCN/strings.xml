@@ -205,7 +205,9 @@
     <string name="proxy_hide_unavailable">隐藏不可用</string>
     <string name="proxy_close_connections_on_switch">切换节点断开连接</string>
     <string name="proxy_single_column">单列显示</string>
+    <string name="proxy_two_column_layout">双排布局</string>
     <string name="proxy_show_group_icons">显示图标</string>
+    <string name="proxy_no_nodes">无可用节点</string>
     <string name="proxy_timeout">超时</string>
     <string name="proxy_sort_title">排序</string>
     <string name="proxy_sort_default">默认</string>

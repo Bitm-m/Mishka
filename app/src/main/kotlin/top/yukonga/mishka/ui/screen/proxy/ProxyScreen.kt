@@ -25,11 +25,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -38,6 +40,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -90,10 +93,13 @@ import top.yukonga.mishka.ui.platform.IconLoader
 import top.yukonga.mishka.ui.theme.LocalPlatformDensity
 import top.yukonga.mishka.ui.theme.StatusColors
 import top.yukonga.mishka.ui.util.WideContentBox
+import top.yukonga.mishka.ui.util.sheetContentSafePadding
+import top.yukonga.mishka.ui.util.sheetHeightTransition
 import top.yukonga.mishka.viewmodel.ProxyGroupUi
 import top.yukonga.mishka.viewmodel.isBuiltInOutbound
 import top.yukonga.mishka.viewmodel.ProxyUiState
 import top.yukonga.mishka.viewmodel.ProxyViewModel
+import top.yukonga.mishka.viewmodel.visibleProxyGroups
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.DropdownImpl
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
@@ -107,6 +113,7 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.basic.ArrowRight
+import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.MoreCircle
 import top.yukonga.miuix.kmp.icon.extended.Pin
 import top.yukonga.miuix.kmp.icon.extended.Refresh
@@ -116,9 +123,11 @@ import top.yukonga.miuix.kmp.interfaces.HoldDownInteraction
 import top.yukonga.miuix.kmp.squircle.squircleBackground
 import top.yukonga.miuix.kmp.squircle.squircleClip
 import top.yukonga.miuix.kmp.squircle.squircleSurface
+import top.yukonga.miuix.kmp.theme.LocalDismissState
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
+import top.yukonga.miuix.kmp.window.WindowBottomSheet
 import top.yukonga.miuix.kmp.window.WindowListPopup
 import kotlin.math.roundToInt
 
@@ -145,6 +154,7 @@ fun ProxyScreen(
     val uiState = viewModel?.uiState?.collectAsStateWithLifecycle()?.value ?: ProxyUiState()
     val sortOption = viewModel?.sortOption?.collectAsStateWithLifecycle()?.value ?: 0
     val singleColumn = viewModel?.singleColumn?.collectAsStateWithLifecycle()?.value == true
+    val twoColumnGroups = viewModel?.twoColumnGroups?.collectAsStateWithLifecycle()?.value == true
     val showGroupIcons = viewModel?.showGroupIcons?.collectAsStateWithLifecycle()?.value ?: true
     val hideUnavailable = viewModel?.hideUnavailable?.collectAsStateWithLifecycle()?.value == true
     val closeConnectionsOnSwitch = viewModel?.closeConnectionsOnSwitch?.collectAsStateWithLifecycle()?.value == true
@@ -155,7 +165,22 @@ fun ProxyScreen(
         label = "singleColumnProgress",
     )
     val scrollBehavior = MiuixScrollBehavior()
+    // 双排布局下被点开的代理组（以弹窗展开）；保留 last 值让弹窗关闭动画期间内容不塌陷
+    var popupGroupName by remember { mutableStateOf<String?>(null) }
+    var lastPopupGroup by remember { mutableStateOf<ProxyGroupUi?>(null) }
     val groups = uiState.groups
+    val displayGroups = remember(groups, uiState.mode) { visibleProxyGroups(groups, uiState.mode) }
+    val groupNames = remember(groups) { groups.map { it.name }.toSet() }
+    val popupGroup = popupGroupName?.let { name -> groups.firstOrNull { it.name == name } }
+    LaunchedEffect(popupGroup) {
+        if (popupGroup != null) lastPopupGroup = popupGroup
+    }
+    LaunchedEffect(popupGroupName, groups) {
+        if (popupGroupName != null && popupGroup == null) popupGroupName = null
+    }
+    LaunchedEffect(twoColumnGroups) {
+        if (!twoColumnGroups) popupGroupName = null
+    }
     val containerSize = LocalWindowInfo.current.containerSize
     val density = LocalPlatformDensity.current ?: LocalDensity.current
     val maxAnimRows = remember(containerSize.height, density) {
@@ -270,7 +295,7 @@ fun ProxyScreen(
                     color = barColor,
                     scrollBehavior = scrollBehavior,
                     actions = {
-                        if (groups.isNotEmpty()) {
+                        if (displayGroups.isNotEmpty()) {
                             Box {
                                 IconButton(
                                     onClick = { showSortPopup.value = true },
@@ -351,7 +376,7 @@ fun ProxyScreen(
                                     ListPopupColumn {
                                         DropdownImpl(
                                             text = stringResource(R.string.proxy_single_column),
-                                            optionSize = 4,
+                                            optionSize = 5,
                                             isSelected = singleColumn,
                                             index = 0,
                                             onSelectedIndexChange = {
@@ -360,10 +385,20 @@ fun ProxyScreen(
                                             },
                                         )
                                         DropdownImpl(
-                                            text = stringResource(R.string.proxy_show_group_icons),
-                                            optionSize = 4,
-                                            isSelected = showGroupIcons,
+                                            text = stringResource(R.string.proxy_two_column_layout),
+                                            optionSize = 5,
+                                            isSelected = twoColumnGroups,
                                             index = 1,
+                                            onSelectedIndexChange = {
+                                                viewModel?.updateTwoColumnGroups(!twoColumnGroups)
+                                                showPopup.value = false
+                                            },
+                                        )
+                                        DropdownImpl(
+                                            text = stringResource(R.string.proxy_show_group_icons),
+                                            optionSize = 5,
+                                            isSelected = showGroupIcons,
+                                            index = 2,
                                             onSelectedIndexChange = {
                                                 viewModel?.updateShowGroupIcons(!showGroupIcons)
                                                 showPopup.value = false
@@ -371,9 +406,9 @@ fun ProxyScreen(
                                         )
                                         DropdownImpl(
                                             text = stringResource(R.string.proxy_hide_unavailable),
-                                            optionSize = 4,
+                                            optionSize = 5,
                                             isSelected = hideUnavailable,
-                                            index = 2,
+                                            index = 3,
                                             onSelectedIndexChange = {
                                                 viewModel?.updateHideUnavailable(!hideUnavailable)
                                                 showPopup.value = false
@@ -381,9 +416,9 @@ fun ProxyScreen(
                                         )
                                         DropdownImpl(
                                             text = stringResource(R.string.proxy_close_connections_on_switch),
-                                            optionSize = 4,
+                                            optionSize = 5,
                                             isSelected = closeConnectionsOnSwitch,
-                                            index = 3,
+                                            index = 4,
                                             onSelectedIndexChange = {
                                                 viewModel?.updateCloseConnectionsOnSwitch(!closeConnectionsOnSwitch)
                                                 showPopup.value = false
@@ -399,7 +434,7 @@ fun ProxyScreen(
         },
     ) { innerPadding ->
         WideContentBox(modifier = if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier) { sidePadding ->
-            if (groups.isEmpty()) {
+            if (displayGroups.isEmpty()) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -426,6 +461,14 @@ fun ProxyScreen(
                 val onSelectProxy: (String, String) -> Unit = remember(viewModel) {
                     { groupName, proxyName -> viewModel?.selectProxy(groupName, proxyName) }
                 }
+                fun visibleNodesFor(group: ProxyGroupUi): List<String> = if (hideUnavailable) {
+                    group.all.filter {
+                        isBuiltInOutbound(it, group.nodeTypes[it].orEmpty()) || group.delays[it] != -1
+                    }
+                } else {
+                    group.all
+                }
+                val sheetGroup = popupGroup ?: lastPopupGroup
 
                 LazyColumn(
                     modifier = Modifier
@@ -460,8 +503,48 @@ fun ProxyScreen(
                     }
 
 
+                    if (twoColumnGroups) {
+                        // 双排布局：组卡片两列排列，点击整卡以弹窗展开（对齐 zashboard 的移动端卡片）
+                        val groupRows = displayGroups.chunked(2)
+                        groupRows.forEachIndexed { rowIndex, rowGroups ->
+                            item(
+                                key = "group_grid_row:$rowIndex:${rowGroups.joinToString(",") { it.name }}",
+                                contentType = "proxy_group_grid_row",
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .animateItem(placementSpec = null)
+                                        .padding(
+                                            start = 12.dp,
+                                            end = 12.dp,
+                                            top = if (rowIndex == 0) 12.dp else 8.dp,
+                                        ),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    rowGroups.forEach { group ->
+                                        ProxyGroupGridCard(
+                                            group = group,
+                                            showIcon = showGroupIcons,
+                                            availableNodeCount = group.all.count { nodeName ->
+                                                nodeName in groupNames ||
+                                                        isBuiltInOutbound(nodeName, group.nodeTypes[nodeName].orEmpty()) ||
+                                                        (group.delays[nodeName] ?: -1) >= 0
+                                            },
+                                            isTesting = group.name in uiState.testingGroups,
+                                            onTestDelay = { viewModel?.testGroupDelay(group.name) },
+                                            onClick = { popupGroupName = group.name },
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    }
+                                    if (rowGroups.size == 1 && displayGroups.size > 1) {
+                                        Spacer(Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                        }
+                    } else {
                     // 展平为独立 item，仅组合可见行
-                    groups.forEach { group ->
+                    displayGroups.forEach { group ->
                         val isExpanded = group.name in expandedGroups
                         val rowsPresent = isExpanded || group.name in retainedGroups
                         val isAnimating = group.name in animatingGroups
@@ -562,10 +645,25 @@ fun ProxyScreen(
                             }
                         }
                     }
+                    }
                     item(key = "bottom_spacer") {
                         Spacer(Modifier.padding(bottom = 12.dp))
                     }
                 }
+                ProxyGroupNodesSheet(
+                    show = popupGroupName != null,
+                    group = sheetGroup,
+                    displayNodes = sheetGroup?.let { visibleNodesFor(it) } ?: emptyList(),
+                    sortOption = sortOption,
+                    singleColumn = singleColumn,
+                    testingGroups = uiState.testingGroups,
+                    testingNodes = uiState.testingNodes,
+                    onDismiss = { popupGroupName = null },
+                    onTestDelay = { groupName -> viewModel?.testGroupDelay(groupName) },
+                    onUnfix = { groupName -> viewModel?.unfixProxy(groupName) },
+                    onTestNodeDelay = onTestNodeDelay,
+                    onSelect = onSelectProxy,
+                )
             }
         }
     }
@@ -734,6 +832,291 @@ private fun ProxyGroupHeader(
 }
 
 @Composable
+private fun ProxyGroupGridCard(
+    group: ProxyGroupUi,
+    showIcon: Boolean,
+    availableNodeCount: Int,
+    isTesting: Boolean,
+    onTestDelay: () -> Unit,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptic = LocalHapticFeedback.current
+    val nowDelay = group.delays[group.now]
+    val timeoutText = stringResource(R.string.proxy_timeout)
+    val delayText = when {
+        nowDelay == null -> "—"
+        nowDelay < 0 -> timeoutText
+        else -> "$nowDelay"
+    }
+
+    Box(
+        modifier = modifier
+            .heightIn(min = 96.dp)
+            .squircleSurface(color = MiuixTheme.colorScheme.surfaceContainer, cornerRadius = 16.dp)
+            .clickable {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(verticalAlignment = Alignment.Top) {
+                Text(
+                    text = group.name,
+                    modifier = Modifier.weight(1f),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MiuixTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (showIcon && group.icon.isNotEmpty()) {
+                    Spacer(Modifier.width(8.dp))
+                    GroupIcon(
+                        icon = group.icon,
+                        name = group.name,
+                    )
+                }
+            }
+            Text(
+                text = "${group.type.uppercase()} · $availableNodeCount/${group.all.size}",
+                modifier = Modifier.padding(top = 5.dp),
+                fontSize = 11.sp,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.weight(1f))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (group.isFixed) {
+                    Icon(
+                        imageVector = MiuixIcons.Pin,
+                        contentDescription = stringResource(R.string.proxy_fixed),
+                        modifier = Modifier.size(12.dp),
+                        tint = StatusColors.warning,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                } else {
+                    Image(
+                        imageVector = MiuixIcons.Basic.ArrowRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp),
+                        colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.onSurfaceVariantSummary),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(
+                    text = group.now.ifEmpty { "-" },
+                    modifier = Modifier.weight(1f),
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .squircleBackground(StatusColors.delay(nowDelay).copy(alpha = 0.14f), 10.dp)
+                        .clickable(
+                            enabled = !isTesting,
+                            interactionSource = null,
+                            indication = null,
+                        ) { onTestDelay() }
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isTesting) {
+                        CircularProgressIndicator(
+                            size = 12.dp,
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Text(
+                            text = delayText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = StatusColors.delay(nowDelay),
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProxyGroupNodesSheet(
+    show: Boolean,
+    group: ProxyGroupUi?,
+    displayNodes: List<String>,
+    sortOption: Int,
+    singleColumn: Boolean,
+    testingGroups: ImmutableSet<String>,
+    testingNodes: ImmutableSet<String>,
+    onDismiss: () -> Unit,
+    onTestDelay: (String) -> Unit,
+    onUnfix: (String) -> Unit,
+    onTestNodeDelay: (String) -> Unit,
+    onSelect: (String, String) -> Unit,
+) {
+    WindowBottomSheet(
+        show = show,
+        title = group?.name.orEmpty(),
+        onDismissRequest = onDismiss,
+        endAction = {
+            val dismiss = LocalDismissState.current
+            IconButton(onClick = { dismiss?.invoke() }) {
+                Icon(
+                    imageVector = MiuixIcons.Close,
+                    contentDescription = stringResource(R.string.common_close),
+                    tint = MiuixTheme.colorScheme.onBackground,
+                )
+            }
+        },
+    ) {
+        group?.let { currentGroup ->
+        val sortedNodes = remember(currentGroup, displayNodes, sortOption) {
+            sortNodes(displayNodes, currentGroup.delays, sortOption)
+        }
+        val columnCount = if (singleColumn) 1 else 2
+        val rows = remember(sortedNodes, columnCount) {
+            sortedNodes.chunked(columnCount).map { it.toPersistentList() }.toPersistentList()
+        }
+        val activeRowIndex = remember(currentGroup.name, rows) {
+            rows.indexOfFirst { row -> currentGroup.now in row }.takeIf { it >= 0 } ?: 0
+        }
+        val isTesting = currentGroup.name in testingGroups
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .sheetContentSafePadding()
+                .sheetHeightTransition(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "${currentGroup.type.uppercase()} · ${displayNodes.size}/${currentGroup.all.size}",
+                        fontSize = 12.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (currentGroup.now.isNotEmpty()) {
+                        Text(
+                            text = currentGroup.now,
+                            modifier = Modifier.padding(top = 2.dp),
+                            fontSize = 13.sp,
+                            color = MiuixTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (currentGroup.isFixed) {
+                    IconButton(
+                        onClick = { onUnfix(currentGroup.name) },
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            imageVector = MiuixIcons.Unpin,
+                            contentDescription = stringResource(R.string.proxy_unfix),
+                            modifier = Modifier.size(17.dp),
+                            tint = StatusColors.warning,
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                }
+                IconButton(
+                    onClick = { onTestDelay(currentGroup.name) },
+                    enabled = !isTesting,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    if (isTesting) {
+                        CircularProgressIndicator(
+                            size = 16.dp,
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = MiuixIcons.Refresh,
+                            contentDescription = stringResource(R.string.proxy_test_group_delay),
+                            modifier = Modifier.size(17.dp),
+                            tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                    }
+                }
+            }
+
+            if (rows.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 160.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = stringResource(R.string.proxy_no_nodes),
+                        fontSize = 14.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+            } else {
+                key(currentGroup.name) {
+                    val sheetListState = rememberLazyListState(
+                        initialFirstVisibleItemIndex = activeRowIndex,
+                    )
+                    LazyColumn(
+                        state = sheetListState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 520.dp),
+                        contentPadding = PaddingValues(bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(
+                            items = rows,
+                            key = { row -> "${currentGroup.name}:${row.joinToString(",")}" },
+                        ) { row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                row.forEach { proxyName ->
+                                    ProxyNodeCard(
+                                        modifier = Modifier.weight(1f),
+                                        name = proxyName,
+                                        type = currentGroup.nodeTypes[proxyName].orEmpty(),
+                                        delay = currentGroup.delays[proxyName],
+                                        isSelected = proxyName == currentGroup.now,
+                                        isFixed = proxyName == currentGroup.fixed,
+                                        isSelectable = currentGroup.isSelectable,
+                                        isTesting = proxyName in testingNodes,
+                                        onTestDelay = onTestNodeDelay,
+                                        onClick = { selected -> onSelect(currentGroup.name, selected) },
+                                    )
+                                }
+                                if (columnCount == 2 && row.size == 1) {
+                                    Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        } ?: Box(Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
 private fun GroupIcon(
     icon: String,
     name: String,
@@ -874,6 +1257,7 @@ private fun ProxyNodeRow(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ProxyNodeCard(
+    modifier: Modifier = Modifier,
     name: String,
     type: String,
     delay: Int?,
@@ -901,7 +1285,7 @@ private fun ProxyNodeCard(
     }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .then(
                 if (isSelectable) {
                     Modifier

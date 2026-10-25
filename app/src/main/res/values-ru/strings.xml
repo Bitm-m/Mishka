@@ -205,7 +205,9 @@
     <string name="proxy_hide_unavailable">Скрывать недоступные</string>
     <string name="proxy_close_connections_on_switch">Закрывать соединения при смене узла</string>
     <string name="proxy_single_column">В один столбец</string>
+    <string name="proxy_two_column_layout">Раскладка в две колонки</string>
     <string name="proxy_show_group_icons">Показывать значки</string>
+    <string name="proxy_no_nodes">Нет доступных узлов</string>
     <string name="proxy_timeout">Тайм-аут</string>
     <string name="proxy_sort_title">Сортировка</string>
     <string name="proxy_sort_default">По умолчанию</string>
