@@ -37,7 +37,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
@@ -47,6 +46,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -77,6 +77,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
@@ -102,6 +103,7 @@ import top.yukonga.mishka.ui.util.WideContentBox
 import top.yukonga.mishka.ui.util.sheetContentSafePadding
 import top.yukonga.mishka.ui.util.sheetHeightTransition
 import top.yukonga.mishka.viewmodel.ProxyGroupUi
+import top.yukonga.mishka.viewmodel.finalOutboundName
 import top.yukonga.mishka.viewmodel.isBuiltInOutbound
 import top.yukonga.mishka.viewmodel.ProxyUiState
 import top.yukonga.mishka.viewmodel.ProxyViewModel
@@ -142,6 +144,7 @@ private class GroupRowsCacheEntry(
     val delays: ImmutableMap<String, Int>,
     val sortOption: Int,
     val hideUnavailable: Boolean,
+    val sortedNodes: ImmutableList<String>,
     val rows: ImmutableList<ImmutableList<String>>,
 )
 
@@ -150,6 +153,75 @@ private val SortResIds = listOf(
     R.string.proxy_sort_name,
     R.string.proxy_sort_delay,
 )
+
+private sealed interface ProxyDisplayItem {
+    data class ProviderHeader(val provider: String) : ProxyDisplayItem
+    data class NodeRow(
+        val row: ImmutableList<String>,
+        val nodeRowIndex: Int,
+    ) : ProxyDisplayItem
+}
+
+/**
+ * 按提供商把已排序节点分区（对齐 zashboard 的 `groupProxiesByProviderName`）：
+ * 无提供商的节点排在最前且不显示分区标题，其余按首次出现顺序排列。
+ */
+private fun providerSections(
+    nodes: List<String>,
+    group: ProxyGroupUi,
+): ImmutableList<Pair<String, ImmutableList<String>>> {
+    if (nodes.isEmpty()) return persistentListOf()
+    val byProvider = LinkedHashMap<String, MutableList<String>>()
+    nodes.forEach { nodeName ->
+        byProvider.getOrPut(group.nodeProviders[nodeName].orEmpty()) { mutableListOf() }.add(nodeName)
+    }
+    return buildList {
+        if (byProvider.containsKey("")) {
+            add("" to byProvider.getValue("").toPersistentList())
+        }
+        byProvider.forEach { (provider, providerNodes) ->
+            if (provider.isNotEmpty()) add(provider to providerNodes.toPersistentList())
+        }
+    }.toPersistentList()
+}
+
+private fun proxyDisplayItems(
+    rows: List<ImmutableList<String>>,
+    group: ProxyGroupUi,
+    groupByProvider: Boolean,
+): ImmutableList<ProxyDisplayItem> {
+    if (!groupByProvider) {
+        return rows.mapIndexed { index, row -> ProxyDisplayItem.NodeRow(row, index) }.toPersistentList()
+    }
+    val items = mutableListOf<ProxyDisplayItem>()
+    var lastProvider: String? = null
+    rows.forEachIndexed { index, row ->
+        val provider = group.nodeProviders[row.firstOrNull().orEmpty()].orEmpty()
+        if (provider != lastProvider) {
+            if (provider.isNotEmpty()) {
+                items += ProxyDisplayItem.ProviderHeader(provider)
+            }
+            lastProvider = provider
+        }
+        items += ProxyDisplayItem.NodeRow(row, index)
+    }
+    return items.toPersistentList()
+}
+
+private fun nowDisplayText(
+    group: ProxyGroupUi,
+    allGroups: List<ProxyGroupUi>,
+    showFinalOutbound: Boolean,
+): String {
+    val now = group.now.ifEmpty { "-" }
+    if (!showFinalOutbound || group.now.isEmpty()) return now
+    val finalOutbound = finalOutboundName(allGroups, group)
+    return if (finalOutbound.isNotEmpty() && finalOutbound != group.now) {
+        "$now → $finalOutbound"
+    } else {
+        now
+    }
+}
 
 @Composable
 fun ProxyScreen(
@@ -161,6 +233,8 @@ fun ProxyScreen(
     val sortOption = viewModel?.sortOption?.collectAsStateWithLifecycle()?.value ?: 0
     val singleColumn = viewModel?.singleColumn?.collectAsStateWithLifecycle()?.value == true
     val twoColumnGroups = viewModel?.twoColumnGroups?.collectAsStateWithLifecycle()?.value == true
+    val groupByProvider = viewModel?.groupByProvider?.collectAsStateWithLifecycle()?.value == true
+    val showFinalOutbound = viewModel?.showFinalOutbound?.collectAsStateWithLifecycle()?.value == true
     val showGroupIcons = viewModel?.showGroupIcons?.collectAsStateWithLifecycle()?.value ?: true
     val hideUnavailable = viewModel?.hideUnavailable?.collectAsStateWithLifecycle()?.value == true
     val closeConnectionsOnSwitch = viewModel?.closeConnectionsOnSwitch?.collectAsStateWithLifecycle()?.value == true
@@ -281,10 +355,15 @@ fun ProxyScreen(
         if (cached != null && cached.all === group.all && cached.delays === group.delays && cached.sortOption == option && cached.hideUnavailable == hideUnavailable) {
             return cached.rows
         }
-        val sorted = sortNodes(displayNodes, group.delays, option)
+        val sorted = sortNodes(displayNodes, group.delays, option).toPersistentList()
         val chunked = sorted.chunked(2).map { it.toPersistentList() }.toPersistentList()
-        rowsCache[group.name] = GroupRowsCacheEntry(group.all, group.delays, option, hideUnavailable, chunked)
+        rowsCache[group.name] = GroupRowsCacheEntry(group.all, group.delays, option, hideUnavailable, sorted, chunked)
         return chunked
+    }
+
+    fun getSortedGroupNodes(group: ProxyGroupUi, displayNodes: List<String>, option: Int, hideUnavailable: Boolean): ImmutableList<String> {
+        getGroupRows(group, displayNodes, option, hideUnavailable)
+        return rowsCache[group.name]?.sortedNodes ?: displayNodes.toPersistentList()
     }
 
 
@@ -382,7 +461,7 @@ fun ProxyScreen(
                                     ListPopupColumn {
                                         DropdownImpl(
                                             text = stringResource(R.string.proxy_single_column),
-                                            optionSize = 5,
+                                            optionSize = 7,
                                             isSelected = singleColumn,
                                             index = 0,
                                             onSelectedIndexChange = {
@@ -392,7 +471,7 @@ fun ProxyScreen(
                                         )
                                         DropdownImpl(
                                             text = stringResource(R.string.proxy_show_group_icons),
-                                            optionSize = 5,
+                                            optionSize = 7,
                                             isSelected = showGroupIcons,
                                             index = 1,
                                             onSelectedIndexChange = {
@@ -402,7 +481,7 @@ fun ProxyScreen(
                                         )
                                         DropdownImpl(
                                             text = stringResource(R.string.proxy_two_column_layout),
-                                            optionSize = 5,
+                                            optionSize = 7,
                                             isSelected = twoColumnGroups,
                                             index = 2,
                                             onSelectedIndexChange = {
@@ -411,10 +490,30 @@ fun ProxyScreen(
                                             },
                                         )
                                         DropdownImpl(
-                                            text = stringResource(R.string.proxy_hide_unavailable),
-                                            optionSize = 5,
-                                            isSelected = hideUnavailable,
+                                            text = stringResource(R.string.proxy_group_by_provider),
+                                            optionSize = 7,
+                                            isSelected = groupByProvider,
                                             index = 3,
+                                            onSelectedIndexChange = {
+                                                viewModel?.updateGroupByProvider(!groupByProvider)
+                                                showPopup.value = false
+                                            },
+                                        )
+                                        DropdownImpl(
+                                            text = stringResource(R.string.proxy_show_final_outbound),
+                                            optionSize = 7,
+                                            isSelected = showFinalOutbound,
+                                            index = 4,
+                                            onSelectedIndexChange = {
+                                                viewModel?.updateShowFinalOutbound(!showFinalOutbound)
+                                                showPopup.value = false
+                                            },
+                                        )
+                                        DropdownImpl(
+                                            text = stringResource(R.string.proxy_hide_unavailable),
+                                            optionSize = 7,
+                                            isSelected = hideUnavailable,
+                                            index = 5,
                                             onSelectedIndexChange = {
                                                 viewModel?.updateHideUnavailable(!hideUnavailable)
                                                 showPopup.value = false
@@ -422,9 +521,9 @@ fun ProxyScreen(
                                         )
                                         DropdownImpl(
                                             text = stringResource(R.string.proxy_close_connections_on_switch),
-                                            optionSize = 5,
+                                            optionSize = 7,
                                             isSelected = closeConnectionsOnSwitch,
-                                            index = 4,
+                                            index = 6,
                                             onSelectedIndexChange = {
                                                 viewModel?.updateCloseConnectionsOnSwitch(!closeConnectionsOnSwitch)
                                                 showPopup.value = false
@@ -536,6 +635,7 @@ fun ProxyScreen(
                                                         isBuiltInOutbound(nodeName, group.nodeTypes[nodeName].orEmpty()) ||
                                                         (group.delays[nodeName] ?: -1) >= 0
                                             },
+                                            nowText = nowDisplayText(group, groups, showFinalOutbound),
                                             isTesting = group.name in uiState.testingGroups,
                                             onTestDelay = { viewModel?.testGroupDelay(group.name) },
                                             onClick = { popupGroupName = group.name },
@@ -562,7 +662,16 @@ fun ProxyScreen(
                             group.all
                         }
                         val allRows = if (rowsPresent) {
-                            getGroupRows(group, displayNodes, sortOption, hideUnavailable)
+                            if (groupByProvider) {
+                                val sortedNodes = getSortedGroupNodes(group, displayNodes, sortOption, hideUnavailable)
+                                providerSections(sortedNodes, group)
+                                    .flatMap { (_, sectionNodes) ->
+                                        sectionNodes.chunked(2).map { it.toPersistentList() }
+                                    }
+                                    .toPersistentList()
+                            } else {
+                                getGroupRows(group, displayNodes, sortOption, hideUnavailable)
+                            }
                         } else {
                             persistentListOf()
                         }
@@ -595,6 +704,7 @@ fun ProxyScreen(
                                                 isBuiltInOutbound(nodeName, group.nodeTypes[nodeName].orEmpty()) ||
                                                 (group.delays[nodeName] ?: -1) >= 0
                                     },
+                                    nowText = nowDisplayText(group, groups, showFinalOutbound),
                                     isExpanded = isExpanded,
                                     expandProgress = groupProgress,
                                     isTesting = group.name in uiState.testingGroups,
@@ -621,37 +731,76 @@ fun ProxyScreen(
                                 else -> (rowCount * currentFraction).toInt().coerceIn(0, lastRowIndex)
                             }
 
-                            rows.forEachIndexed { rowIndex, row ->
-                                val isCurrentBottom = rowIndex == activeBottomIndex
-                                val rowBottomCorner = if (isCurrentBottom) 16.dp else 0.dp
+                            val displayItems = proxyDisplayItems(rows, group, groupByProvider)
+                            displayItems.forEach { displayItem ->
+                                when (displayItem) {
+                                    is ProxyDisplayItem.ProviderHeader -> {
+                                        // 提供商标题只在完全展开后出现，避免收起动画中残留一截标题高度
+                                        if (currentFraction >= 0.99f) {
+                                            item(
+                                                key = "provider:${group.name}:${displayItem.provider}",
+                                                contentType = "proxy_provider_header",
+                                            ) {
+                                                CardSegment(
+                                                    isFirst = false,
+                                                    isLast = false,
+                                                    modifier = Modifier
+                                                        .animateItem(placementSpec = null)
+                                                        .clipToBounds(),
+                                                    insidePadding = PaddingValues(
+                                                        start = 16.dp,
+                                                        end = 16.dp,
+                                                        top = 12.dp,
+                                                        bottom = 4.dp,
+                                                    ),
+                                                ) {
+                                                    Text(
+                                                        text = displayItem.provider,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MiuixTheme.colorScheme.onSurface,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
 
-                                item(
-                                    key = "nodes:${group.name}:$rowIndex",
-                                    contentType = "proxy_node_row",
-                                ) {
-                                    CardSegment(
-                                        isFirst = false,
-                                        isLast = isCurrentBottom,
-                                        modifier = Modifier
-                                            .animateItem(placementSpec = null)
-                                            .clipToBounds(),
-                                        bottomCornerRadius = rowBottomCorner,
-                                        insidePadding = PaddingValues(
-                                            start = 12.dp,
-                                            end = 12.dp,
-                                        ),
-                                    ) {
-                                        ProxyNodeRow(
-                                            row = row,
-                                            group = group,
-                                            singleColumnProgress = singleColumnProgress,
-                                            expandProgress = groupExpandProgress,
-                                            rowIndex = rowIndex,
-                                            rowCount = rowCount,
-                                            testingNodes = uiState.testingNodes,
-                                            onTestNodeDelay = onTestNodeDelay,
-                                            onSelect = onSelectThisGroup,
-                                        )
+                                    is ProxyDisplayItem.NodeRow -> {
+                                        val rowIndex = displayItem.nodeRowIndex
+                                        val isCurrentBottom = rowIndex == activeBottomIndex
+                                        val rowBottomCorner = if (isCurrentBottom) 16.dp else 0.dp
+
+                                        item(
+                                            key = "nodes:${group.name}:$rowIndex",
+                                            contentType = "proxy_node_row",
+                                        ) {
+                                            CardSegment(
+                                                isFirst = false,
+                                                isLast = isCurrentBottom,
+                                                modifier = Modifier
+                                                    .animateItem(placementSpec = null)
+                                                    .clipToBounds(),
+                                                bottomCornerRadius = rowBottomCorner,
+                                                insidePadding = PaddingValues(
+                                                    start = 12.dp,
+                                                    end = 12.dp,
+                                                ),
+                                            ) {
+                                                ProxyNodeRow(
+                                                    row = displayItem.row,
+                                                    group = group,
+                                                    singleColumnProgress = singleColumnProgress,
+                                                    expandProgress = groupExpandProgress,
+                                                    rowIndex = rowIndex,
+                                                    rowCount = rowCount,
+                                                    testingNodes = uiState.testingNodes,
+                                                    onTestNodeDelay = onTestNodeDelay,
+                                                    onSelect = onSelectThisGroup,
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -668,6 +817,8 @@ fun ProxyScreen(
                     displayNodes = sheetGroup?.let { visibleNodesFor(it) } ?: emptyList(),
                     sortOption = sortOption,
                     singleColumn = singleColumn,
+                    groupByProvider = groupByProvider,
+                    nowText = sheetGroup?.let { nowDisplayText(it, groups, showFinalOutbound) }.orEmpty(),
                     testingGroups = uiState.testingGroups,
                     testingNodes = uiState.testingNodes,
                     onDismiss = { popupGroupName = null },
@@ -714,6 +865,7 @@ private fun ProxyGroupHeader(
     showIcon: Boolean,
     visibleNodes: List<String>,
     availableNodeCount: Int,
+    nowText: String,
     isExpanded: Boolean,
     expandProgress: FloatState? = null,
     isTesting: Boolean,
@@ -844,13 +996,11 @@ private fun ProxyGroupHeader(
                 )
             }
             Spacer(Modifier.width(4.dp))
-            Text(
-                text = group.now.ifEmpty { "-" },
+            MarqueeText(
+                text = nowText,
                 modifier = Modifier.weight(1f),
                 fontSize = 13.sp,
                 color = MiuixTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.width(8.dp))
             val layoutDirection = LocalLayoutDirection.current
@@ -977,11 +1127,48 @@ private fun previewDelayColor(delay: Int?): Color = when {
     else -> StatusColors.danger
 }
 
+/** 卡片单行文字：放得下时省略号截断，溢出后才走跑马灯，避免一屏卡片同时滚动。 */
+@Composable
+private fun MarqueeText(
+    text: String,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit,
+    fontWeight: FontWeight? = null,
+    color: Color,
+) {
+    var textOverflows by remember(text) { mutableStateOf(false) }
+    Text(
+        text = text,
+        modifier = modifier.then(
+            if (textOverflows) {
+                Modifier.basicMarquee(
+                    iterations = Int.MAX_VALUE,
+                    initialDelayMillis = 1500,
+                )
+            } else {
+                Modifier
+            }
+        ),
+        fontSize = fontSize,
+        fontWeight = fontWeight,
+        color = color,
+        maxLines = 1,
+        softWrap = false,
+        overflow = if (textOverflows) TextOverflow.Clip else TextOverflow.Ellipsis,
+        onTextLayout = { result ->
+            if (result.hasVisualOverflow && !textOverflows) {
+                textOverflows = true
+            }
+        },
+    )
+}
+
 @Composable
 private fun ProxyGroupGridCard(
     group: ProxyGroupUi,
     showIcon: Boolean,
     availableNodeCount: Int,
+    nowText: String,
     isTesting: Boolean,
     onTestDelay: () -> Unit,
     onClick: () -> Unit,
@@ -1008,14 +1195,12 @@ private fun ProxyGroupGridCard(
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(verticalAlignment = Alignment.Top) {
-                Text(
+                MarqueeText(
                     text = group.name,
                     modifier = Modifier.weight(1f),
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
                     color = MiuixTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 if (showIcon && group.icon.isNotEmpty()) {
                     Spacer(Modifier.width(8.dp))
@@ -1055,13 +1240,11 @@ private fun ProxyGroupGridCard(
                     )
                     Spacer(Modifier.width(4.dp))
                 }
-                Text(
-                    text = group.now.ifEmpty { "-" },
+                MarqueeText(
+                    text = nowText,
                     modifier = Modifier.weight(1f),
                     fontSize = 12.sp,
                     color = MiuixTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.width(8.dp))
                 Box(
@@ -1102,6 +1285,8 @@ private fun ProxyGroupNodesSheet(
     displayNodes: List<String>,
     sortOption: Int,
     singleColumn: Boolean,
+    groupByProvider: Boolean,
+    nowText: String,
     testingGroups: ImmutableSet<String>,
     testingNodes: ImmutableSet<String>,
     onDismiss: () -> Unit,
@@ -1130,21 +1315,30 @@ private fun ProxyGroupNodesSheet(
             sortNodes(displayNodes, currentGroup.delays, sortOption)
         }
         val columnCount = if (singleColumn) 1 else 2
-        val rows = remember(sortedNodes, columnCount) {
-            sortedNodes.chunked(columnCount).map { it.toPersistentList() }.toPersistentList()
+        val rows = remember(sortedNodes, columnCount, currentGroup, groupByProvider) {
+            if (groupByProvider) {
+                providerSections(sortedNodes, currentGroup)
+                    .flatMap { (_, sectionNodes) ->
+                        sectionNodes.chunked(columnCount).map { it.toPersistentList() }
+                    }
+                    .toPersistentList()
+            } else {
+                sortedNodes.chunked(columnCount).map { it.toPersistentList() }.toPersistentList()
+            }
         }
-        val activeRowIndex = remember(currentGroup.name, rows) {
-            rows.indexOfFirst { row -> currentGroup.now in row }.takeIf { it >= 0 } ?: 0
+        val sheetItems = remember(rows, currentGroup, groupByProvider) {
+            proxyDisplayItems(rows, currentGroup, groupByProvider)
+        }
+        val activeItemIndex = remember(currentGroup.name, sheetItems) {
+            sheetItems.indexOfFirst { item ->
+                item is ProxyDisplayItem.NodeRow && currentGroup.now in item.row
+            }.takeIf { it >= 0 } ?: 0
         }
         val isTesting = currentGroup.name in testingGroups
-        val sheetListState = remember(currentGroup.name) {
-            LazyListState(firstVisibleItemIndex = activeRowIndex)
-        }
 
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 620.dp)
                 .sheetContentSafePadding()
                 .sheetHeightTransition(),
         ) {
@@ -1164,7 +1358,7 @@ private fun ProxyGroupNodesSheet(
                     )
                     if (currentGroup.now.isNotEmpty()) {
                         Text(
-                            text = currentGroup.now,
+                            text = nowText,
                             modifier = Modifier.padding(top = 2.dp),
                             fontSize = 13.sp,
                             color = MiuixTheme.colorScheme.onSurface,
@@ -1222,37 +1416,67 @@ private fun ProxyGroupNodesSheet(
                     )
                 }
             } else {
-                // 列表必须作为 Column 的加权子项拿到剩余高度，否则会被按内容高度
-                // 整体测量，视口等于全部行而无法滚动。
-                LazyColumn(
-                    state = sheetListState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f, fill = false),
-                    contentPadding = PaddingValues(bottom = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(
-                        items = rows,
-                        key = { row -> "${currentGroup.name}:${row.joinToString(",")}" },
-                    ) { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { proxyName ->
-                                ProxyNodeCard(
-                                    modifier = Modifier.weight(1f),
-                                    name = proxyName,
-                                    type = currentGroup.nodeTypes[proxyName].orEmpty(),
-                                    delay = currentGroup.delays[proxyName],
-                                    isSelected = proxyName == currentGroup.now,
-                                    isFixed = proxyName == currentGroup.fixed,
-                                    isSelectable = currentGroup.isSelectable,
-                                    isTesting = proxyName in testingNodes,
-                                    onTestDelay = onTestNodeDelay,
-                                    onClick = { selected -> onSelect(currentGroup.name, selected) },
-                                )
-                            }
-                            if (columnCount == 2 && row.size == 1) {
-                                Spacer(Modifier.weight(1f))
+                key(currentGroup.name) {
+                    val sheetListState = rememberLazyListState(
+                        initialFirstVisibleItemIndex = activeItemIndex,
+                    )
+                    LazyColumn(
+                        state = sheetListState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 520.dp),
+                        contentPadding = PaddingValues(bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(
+                            items = sheetItems,
+                            key = { item ->
+                                when (item) {
+                                    is ProxyDisplayItem.ProviderHeader ->
+                                        "${currentGroup.name}:provider:${item.provider}"
+
+                                    is ProxyDisplayItem.NodeRow ->
+                                        "${currentGroup.name}:${item.row.joinToString(",")}"
+                                }
+                            },
+                        ) { item ->
+                            when (item) {
+                                is ProxyDisplayItem.ProviderHeader -> {
+                                    Text(
+                                        text = item.provider,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 4.dp, bottom = 2.dp),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MiuixTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+
+                                is ProxyDisplayItem.NodeRow -> {
+                                    val row = item.row
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        row.forEach { proxyName ->
+                                            ProxyNodeCard(
+                                                modifier = Modifier.weight(1f),
+                                                name = proxyName,
+                                                type = currentGroup.nodeTypes[proxyName].orEmpty(),
+                                                delay = currentGroup.delays[proxyName],
+                                                isSelected = proxyName == currentGroup.now,
+                                                isFixed = proxyName == currentGroup.fixed,
+                                                isSelectable = currentGroup.isSelectable,
+                                                isTesting = proxyName in testingNodes,
+                                                onTestDelay = onTestNodeDelay,
+                                                onClick = { selected -> onSelect(currentGroup.name, selected) },
+                                            )
+                                        }
+                                        if (columnCount == 2 && row.size == 1) {
+                                            Spacer(Modifier.weight(1f))
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

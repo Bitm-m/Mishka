@@ -209,6 +209,8 @@
     <string name="proxy_single_column">Single Column</string>
     <string name="proxy_two_column_layout">Two-Column Proxy Groups</string>
     <string name="proxy_show_group_icons">Show Icons</string>
+    <string name="proxy_group_by_provider">Group by Provider</string>
+    <string name="proxy_show_final_outbound">Show Final Outbound</string>
     <string name="proxy_no_nodes">No available nodes</string>
     <string name="proxy_timeout">Timeout</string>
     <string name="proxy_sort_title">Sort</string>

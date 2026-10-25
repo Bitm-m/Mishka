@@ -207,6 +207,8 @@
     <string name="proxy_single_column">单列显示</string>
     <string name="proxy_two_column_layout">双列代理组</string>
     <string name="proxy_show_group_icons">显示图标</string>
+    <string name="proxy_group_by_provider">按提供商分组</string>
+    <string name="proxy_show_final_outbound">显示最终出站</string>
     <string name="proxy_no_nodes">无可用节点</string>
     <string name="proxy_timeout">超时</string>
     <string name="proxy_sort_title">排序</string>
