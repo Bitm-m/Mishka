@@ -575,7 +575,10 @@ fun ProxyScreen(
                 }
                 fun visibleNodesFor(group: ProxyGroupUi): List<String> = if (hideUnavailable) {
                     group.all.filter {
-                        isBuiltInOutbound(it, group.nodeTypes[it].orEmpty()) || group.delays[it] != -1
+                        // 子代理组不是普通节点，不能按其当前出口的延迟过滤（对齐 zashboard）
+                        it in groupNames ||
+                            isBuiltInOutbound(it, group.nodeTypes[it].orEmpty()) ||
+                            group.delays[it] != -1
                     }
                 } else {
                     group.all
@@ -663,7 +666,10 @@ fun ProxyScreen(
                         val isAnimating = group.name in animatingGroups
                         val displayNodes = if (hideUnavailable) {
                             group.all.filter {
-                                isBuiltInOutbound(it, group.nodeTypes[it].orEmpty()) || group.delays[it] != -1
+                                // 子代理组不是普通节点，不能按其当前出口的延迟过滤（对齐 zashboard）
+                                it in groupNames ||
+                                    isBuiltInOutbound(it, group.nodeTypes[it].orEmpty()) ||
+                                    group.delays[it] != -1
                             }
                         } else {
                             group.all
