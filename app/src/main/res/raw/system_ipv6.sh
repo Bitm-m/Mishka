@@ -21,6 +21,8 @@ NET_FILE="$STATE/net"
 LAST_FILE="$STATE/last"
 APN_STATE="$STATE/apn.state"
 APN_CACHE="$STATE/apn.current"
+APN_LOCK="$STATE/apn.lock"
+APN_LOCK_TIMEOUT=120
 LOG="$STATE/log"
 
 mkdir -p "$STATE" 2>/dev/null
@@ -158,6 +160,37 @@ apn_optimistic_cache() {
   fi
 }
 
+# APN 改写包含多次 content 查询/更新，并在实际变化后重附着数据。once 的后台任务
+# 与紧随其后启动的 watch 没有天然时序保证：watch 可能在首次更新落库前读到旧协议，
+# 从而把同一切换重复改写并重复断网。用 mkdir 的原子性串行化所有 APN 改写/还原；
+# 后到者必须等先行者完成后再重新查询，届时已达目标值便直接跳过。
+_apn_lock_token=""
+apn_lock_acquire() {
+  _apn_lock_waited=0
+  while ! mkdir "$APN_LOCK" 2>/dev/null; do
+    if [ "$_apn_lock_waited" -ge "$APN_LOCK_TIMEOUT" ]; then
+      log "WARN APN 操作锁等待超时，强制接管残留锁"
+      rm -rf "$APN_LOCK" 2>/dev/null
+      _apn_lock_waited=0
+      continue
+    fi
+    sleep 1
+    _apn_lock_waited=$((_apn_lock_waited + 1))
+  done
+  _apn_lock_token="pid=$$"
+  printf '%s\n' "$_apn_lock_token" > "$APN_LOCK/owner" 2>/dev/null
+  return 0
+}
+
+apn_lock_release() {
+  [ -n "$_apn_lock_token" ] || return 0
+  if [ "$(cat "$APN_LOCK/owner" 2>/dev/null)" = "$_apn_lock_token" ]; then
+    rm -rf "$APN_LOCK" 2>/dev/null
+  fi
+  _apn_lock_token=""
+  return 0
+}
+
 # 改协议后需重新附着数据才生效：后台自动开关一次移动数据
 apn_reattach() {
   command -v svc >/dev/null 2>&1 || { log "WARN 无 svc，请手动开关一次飞行模式使 APN 协议生效"; return 0; }
@@ -168,7 +201,8 @@ apn_reattach() {
 
 # 「系统 IPv6=关」：上网 APN 协议改为 IP（幂等；只写漂移的行；跳过 IMS）
 # 写入后不信任 content 的输出文字，而是重新查询同一行，以实际值为准。
-apn_apply() {
+# 实际工作在 apn_lock 内执行，见 apn_apply 包装函数。
+apn_apply_locked() {
   _rows=$(apn_rows)
   if [ -z "$_rows" ]; then
     log "WARN 未查询到首选 APN，未改写（可手动把 APN 协议设为 IPv4，效果相同）"
@@ -196,6 +230,14 @@ APN_ROWS_END
   [ "$_fail" = "0" ]
 }
 
+apn_apply() {
+  apn_lock_acquire
+  apn_apply_locked
+  _apn_rc=$?
+  apn_lock_release
+  return "$_apn_rc"
+}
+
 # 关态周期校验：首选 APN 若被系统或运营商写回 IPv4/IPv6，则重新改写（每 60 秒一次，见 watch 循环）
 apn_drift_check() {
   _rows=$(apn_rows)
@@ -209,7 +251,8 @@ apn_drift_check() {
 }
 
 # 「系统 IPv6=开」：按状态文件还原 protocol / roaming_protocol；若状态文件缺失但当前仍为 IP，则兜底恢复为 IPV4V6
-apn_restore() {
+# 实际工作在 apn_lock 内执行，见 apn_restore 包装函数。
+apn_restore_locked() {
   _fail=0; _changed=0
   if [ -f "$APN_STATE" ]; then
     while IFS='|' read -r _id _apn _p _r; do
@@ -247,6 +290,14 @@ APN_RESTORE_END
   fi
   [ "$_changed" = "1" ] && apn_reattach
   return 0
+}
+
+apn_restore() {
+  apn_lock_acquire
+  apn_restore_locked
+  _apn_rc=$?
+  apn_lock_release
+  return "$_apn_rc"
 }
 
 # 网络指纹 = 路由表 + 网卡集合（切网 / 飞行模式 / 换卡时变化）
