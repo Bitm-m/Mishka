@@ -257,7 +257,9 @@ apn_restore_locked() {
     while IFS='|' read -r _id _apn _p _r; do
       [ -n "$_id" ] || continue
       if [ -z "$_p" ] || [ "$_p" = "IP" ]; then _p="IPV4V6"; fi
-      [ -n "$_r" ] || _r="IP"
+      # 保存的漫游为空（原 APN 未显式设置漫游协议）时镜像协议还原，不能填 IP：
+      # 关闭时已把漫游显式写成 IP，开启再写 IP 等于漫游永远停在 IPv4。
+      [ -n "$_r" ] || _r="$_p"
       _res=$(content update --uri content://telephony/carriers --where "_id=$_id" --bind "protocol:s:$_p" --bind "roaming_protocol:s:$_r" 2>&1)
       _now=$(apn_rows | grep "^$_id|" | head -1)
       case "$_now" in
@@ -274,7 +276,10 @@ apn_restore_locked() {
         [ -n "$_id" ] || continue
         case "$_t" in *ims*|*IMS*) continue ;; esac
         if [ "$_p" = "IP" ]; then
-          [ -n "$_r" ] || _r="IP"
+          # 协议能停在 IP 说明关闭时改过库，当时漫游也被一并写成 IP，故漫游同为
+          # IP（或为空）时必须一起还原为 IPV4V6；写回当前值等于漫游永远恢复不了。
+          # 漫游已是其他值（用户/运营商另行设置）时不动。
+          case "$_r" in "" | "IP") _r="IPV4V6" ;; esac
           _res=$(content update --uri content://telephony/carriers --where "_id=$_id" --bind protocol:s:IPV4V6 --bind "roaming_protocol:s:$_r" 2>&1)
           _now=$(apn_rows | grep "^$_id|" | head -1)
           case "$_now" in
