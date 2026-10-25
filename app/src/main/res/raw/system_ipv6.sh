@@ -37,7 +37,7 @@ sanitize_state() {
     awk -F'|' 'BEGIN{OFS="|"} {
       gsub(/,$/, "", $1); gsub(/,$/, "", $2); gsub(/,$/, "", $3); gsub(/,$/, "", $4)
       if ($3 == "" || $3 == "IP") $3 = "IPV4V6"
-      if ($4 == "") $4 = "IP"
+      if ($4 == "" || $4 == "IP") $4 = "IPV4V6"
       if ($1 != "") print $1, $2, $3, $4
     }' "$APN_STATE" > "$APN_STATE.tmp" 2>/dev/null &&
       chmod 0644 "$APN_STATE.tmp" 2>/dev/null &&
@@ -143,14 +143,17 @@ apn_optimistic_cache() {
       NR==FNR {
         if ($1 != "") {
           orig_p[$1] = ($3 != "" && $3 != "IP") ? $3 : "IPV4V6"
-          orig_r[$1] = ($4 != "") ? $4 : "IP"
+          orig_r[$1] = ($4 != "" && $4 != "IP") ? $4 : "IPV4V6"
         }
         next
       }
       {
         if (tolower($5) !~ /ims/) {
           if ($1 in orig_p) { $3 = orig_p[$1]; $4 = orig_r[$1] }
-          else if ($3 == "IP") { $3 = "IPV4V6" }
+          else {
+            if ($3 == "" || $3 == "IP") { $3 = "IPV4V6" }
+            if ($4 == "" || $4 == "IP") { $4 = "IPV4V6" }
+          }
         }
         print
       }
@@ -249,7 +252,7 @@ apn_drift_check() {
   return 0
 }
 
-# 「系统 IPv6=开」：按状态文件还原 protocol / roaming_protocol；若状态文件缺失但当前仍为 IP，则兜底恢复为 IPV4V6
+# 「系统 IPv6=开」：按状态文件还原 protocol / roaming_protocol；其中 IPv4-only 的 IP/空值提升为 IPV4V6，状态文件缺失时按当前值兜底
 # 实际工作在 apn_lock 内执行，见 apn_restore 包装函数。
 apn_restore_locked() {
   _fail=0; _changed=0
@@ -257,9 +260,10 @@ apn_restore_locked() {
     while IFS='|' read -r _id _apn _p _r; do
       [ -n "$_id" ] || continue
       if [ -z "$_p" ] || [ "$_p" = "IP" ]; then _p="IPV4V6"; fi
-      # 保存的漫游为空（原 APN 未显式设置漫游协议）时镜像协议还原，不能填 IP：
-      # 关闭时已把漫游显式写成 IP，开启再写 IP 等于漫游永远停在 IPv4。
-      [ -n "$_r" ] || _r="$_p"
+      # 保存的漫游若仍是 IPv4-only（IP/空），开启 IPv6 时提升为 IPV4V6。运营商默认
+      # APN（如 ctnet）的 roaming_protocol 常为 IP，若原样还原就会出现协议已是
+      # IPv4/IPv6、漫游仍 IPv4；已保存为 IPV6/IPV4V6 等非 IP 值时才按原值还原。
+      case "$_r" in "" | "IP") _r="IPV4V6" ;; esac
       _res=$(content update --uri content://telephony/carriers --where "_id=$_id" --bind "protocol:s:$_p" --bind "roaming_protocol:s:$_r" 2>&1)
       _now=$(apn_rows | grep "^$_id|" | head -1)
       case "$_now" in
@@ -269,21 +273,22 @@ apn_restore_locked() {
     done < "$APN_STATE"
     [ "$_fail" = "0" ] && rm -f "$APN_STATE" 2>/dev/null
   else
-    # 兜底：若 apn.state 已被误删但首选上网 APN 仍停留在 IP，恢复为 IPV4V6
+    # 兜底：若 apn.state 已被误删，只要协议或漫游仍是 IPv4-only（IP/空）就提升为
+    # IPV4V6。旧版本可能已把 protocol 还原、却把 roaming 留在 IP 且删掉了状态文件，
+    # 这里必须能单独修复漫游，否则开启后仍会出现协议双栈、漫游 IPv4。
     _rows=$(apn_rows)
     if [ -n "$_rows" ]; then
       while IFS='|' read -r _id _apn _p _r _t; do
         [ -n "$_id" ] || continue
         case "$_t" in *ims*|*IMS*) continue ;; esac
-        if [ "$_p" = "IP" ]; then
-          # 协议能停在 IP 说明关闭时改过库，当时漫游也被一并写成 IP，故漫游同为
-          # IP（或为空）时必须一起还原为 IPV4V6；写回当前值等于漫游永远恢复不了。
-          # 漫游已是其他值（用户/运营商另行设置）时不动。
-          case "$_r" in "" | "IP") _r="IPV4V6" ;; esac
-          _res=$(content update --uri content://telephony/carriers --where "_id=$_id" --bind protocol:s:IPV4V6 --bind "roaming_protocol:s:$_r" 2>&1)
+        _tp="$_p"; _tr="$_r"
+        case "$_tp" in "" | "IP") _tp="IPV4V6" ;; esac
+        case "$_tr" in "" | "IP") _tr="IPV4V6" ;; esac
+        if [ "$_tp" != "$_p" ] || [ "$_tr" != "$_r" ]; then
+          _res=$(content update --uri content://telephony/carriers --where "_id=$_id" --bind "protocol:s:$_tp" --bind "roaming_protocol:s:$_tr" 2>&1)
           _now=$(apn_rows | grep "^$_id|" | head -1)
           case "$_now" in
-            "$_id|$_apn|IPV4V6|$_r|"*) log "兜底还原 id=$_id apn=$_apn: IPV4V6/$_r（已校验）"; _changed=1 ;;
+            "$_id|$_apn|$_tp|$_tr|"*) log "兜底还原 id=$_id apn=$_apn: $_tp/$_tr（已校验）"; _changed=1 ;;
             *) log "WARN 兜底还原 id=$_id apn=$_apn 后仍为 [$_now]，content 输出：$_res"; _fail=1 ;;
           esac
         fi
@@ -301,6 +306,13 @@ apn_restore() {
   _apn_rc=$?
   apn_lock_release
   return "$_apn_rc"
+}
+
+# 开态重应用时的 APN 体检：任一非 IMS 行的协议或漫游仍为 IPv4-only（IP/空）就需要修复
+apn_ipv6_needed() {
+  _rows=$(apn_rows)
+  [ -n "$_rows" ] || return 1
+  printf '%s\n' "$_rows" | awk -F'|' '$1 != "" && tolower($5) !~ /ims/ && ($3 == "" || $3 == "IP" || $4 == "" || $4 == "IP") { found=1 } END { exit(found ? 0 : 1) }'
 }
 
 # 网络指纹 = 路由表 + 网卡集合（切网 / 飞行模式 / 换卡时变化）
@@ -331,9 +343,14 @@ sync_once() {
   if [ "$_prev" != "$WANT" ]; then
     _need=1; _flip=1
   elif [ "$WANT" = "1" ]; then
-    # 开态：只更新指纹，不写任何东西
+    # 开态：只更新指纹；但 once 重应用时若 APN 仍有 IPv4-only 字段（旧版本遗留的
+    # 协议双栈/漫游 IPv4），借道 flip 路径在后台修复一次，已达标则不写库。
     [ "$_cur" = "$_netprev" ] || printf '%s' "$_cur" > "$NET_FILE"
-    return 0
+    if [ "$MODE" = "once" ] && apn_ipv6_needed; then
+      _need=1; _flip=1
+    else
+      return 0
+    fi
   else
     # 关态：切网 → 必修；网络未变 → 扫描是否有网卡被放回 0，有则按 60 秒冷却追打
     if [ "$_cur" != "$_netprev" ] || [ -z "$_netprev" ]; then
