@@ -127,7 +127,7 @@ class ProxyViewModel(
     private val _singleColumn = MutableStateFlow(loadInitialSingleColumn())
     val singleColumn: StateFlow<Boolean> = _singleColumn.asStateFlow()
 
-    // 代理组双排布局：开启后组卡片两列排列，点击组卡片以弹窗展开节点
+    // 代理组双列布局：开启后组卡片两列排列，点击组卡片以弹窗展开节点
     private val _twoColumnGroups = MutableStateFlow(
         storage?.getString(StorageKeys.PROXY_GROUP_TWO_COLUMN_LAYOUT, "false") == "true"
     )

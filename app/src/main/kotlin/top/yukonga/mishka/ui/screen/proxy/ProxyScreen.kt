@@ -6,11 +6,16 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
@@ -18,6 +23,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -31,6 +37,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
@@ -40,7 +47,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -165,7 +171,7 @@ fun ProxyScreen(
         label = "singleColumnProgress",
     )
     val scrollBehavior = MiuixScrollBehavior()
-    // 双排布局下被点开的代理组（以弹窗展开）；保留 last 值让弹窗关闭动画期间内容不塌陷
+    // 双列布局下被点开的代理组（以弹窗展开）；保留 last 值让弹窗关闭动画期间内容不塌陷
     var popupGroupName by remember { mutableStateOf<String?>(null) }
     var lastPopupGroup by remember { mutableStateOf<ProxyGroupUi?>(null) }
     val groups = uiState.groups
@@ -385,22 +391,22 @@ fun ProxyScreen(
                                             },
                                         )
                                         DropdownImpl(
-                                            text = stringResource(R.string.proxy_two_column_layout),
+                                            text = stringResource(R.string.proxy_show_group_icons),
                                             optionSize = 5,
-                                            isSelected = twoColumnGroups,
+                                            isSelected = showGroupIcons,
                                             index = 1,
                                             onSelectedIndexChange = {
-                                                viewModel?.updateTwoColumnGroups(!twoColumnGroups)
+                                                viewModel?.updateShowGroupIcons(!showGroupIcons)
                                                 showPopup.value = false
                                             },
                                         )
                                         DropdownImpl(
-                                            text = stringResource(R.string.proxy_show_group_icons),
+                                            text = stringResource(R.string.proxy_two_column_layout),
                                             optionSize = 5,
-                                            isSelected = showGroupIcons,
+                                            isSelected = twoColumnGroups,
                                             index = 2,
                                             onSelectedIndexChange = {
-                                                viewModel?.updateShowGroupIcons(!showGroupIcons)
+                                                viewModel?.updateTwoColumnGroups(!twoColumnGroups)
                                                 showPopup.value = false
                                             },
                                         )
@@ -504,7 +510,7 @@ fun ProxyScreen(
 
 
                     if (twoColumnGroups) {
-                        // 双排布局：组卡片两列排列，点击整卡以弹窗展开（对齐 zashboard 的移动端卡片）
+                        // 双列布局：组卡片两列排列，点击整卡以弹窗展开（对齐 zashboard 的移动端卡片）
                         val groupRows = displayGroups.chunked(2)
                         groupRows.forEachIndexed { rowIndex, rowGroups ->
                             item(
@@ -583,12 +589,18 @@ fun ProxyScreen(
                                 ProxyGroupHeader(
                                     group = group,
                                     showIcon = showGroupIcons,
-                                    visibleNodeCount = displayNodes.size,
+                                    visibleNodes = displayNodes,
+                                    availableNodeCount = group.all.count { nodeName ->
+                                        nodeName in groupNames ||
+                                                isBuiltInOutbound(nodeName, group.nodeTypes[nodeName].orEmpty()) ||
+                                                (group.delays[nodeName] ?: -1) >= 0
+                                    },
                                     isExpanded = isExpanded,
                                     expandProgress = groupProgress,
                                     isTesting = group.name in uiState.testingGroups,
                                     onTestDelay = { viewModel?.testGroupDelay(group.name) },
                                     onUnfix = { viewModel?.unfixProxy(group.name) },
+                                    onSelectNode = { proxyName -> onSelectProxy(group.name, proxyName) },
                                     onToggle = { toggleGroup(group.name) },
                                 )
                             }
@@ -700,19 +712,21 @@ private fun HoldDownEffect(holdDown: Boolean, interactionSource: MutableInteract
 private fun ProxyGroupHeader(
     group: ProxyGroupUi,
     showIcon: Boolean,
-    visibleNodeCount: Int,
+    visibleNodes: List<String>,
+    availableNodeCount: Int,
     isExpanded: Boolean,
     expandProgress: FloatState? = null,
     isTesting: Boolean,
     onTestDelay: () -> Unit,
     onUnfix: () -> Unit,
+    onSelectNode: (String) -> Unit,
     onToggle: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     HoldDownEffect(isExpanded, interactionSource)
     val haptic = LocalHapticFeedback.current
 
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(
@@ -723,9 +737,14 @@ private fun ProxyGroupHeader(
                     onToggle()
                 },
             )
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(
+                start = 16.dp,
+                end = 16.dp,
+                top = 16.dp,
+                bottom = if (isExpanded) 6.dp else 16.dp,
+            ),
     ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
         AnimatedVisibility(
             visible = showIcon,
             enter = slideInHorizontally(tween(300)) { -it } +
@@ -743,92 +762,219 @@ private fun ProxyGroupHeader(
             }
         }
 
-        Column(modifier = Modifier.weight(1f)) {
+        Text(
+            text = group.name,
+            modifier = Modifier.weight(1f),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            color = MiuixTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "${group.type.uppercase()} · $availableNodeCount/${group.all.size}",
+            fontSize = 11.sp,
+            letterSpacing = 0.5.sp,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.width(10.dp))
+        val nowDelay = group.delays[group.now]
+        val timeoutText = stringResource(R.string.proxy_timeout)
+        val delayText = when {
+            nowDelay == null -> "—"
+            nowDelay < 0 -> timeoutText
+            else -> "$nowDelay"
+        }
+        Box(
+            modifier = Modifier
+                .sizeIn(minWidth = 40.dp, minHeight = 20.dp)
+                .squircleBackground(MiuixTheme.colorScheme.surface, 10.dp)
+                .clickable(
+                    enabled = !isTesting,
+                    interactionSource = null,
+                    indication = null,
+                ) { onTestDelay() }
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (isTesting) {
+                CircularProgressIndicator(
+                    size = 12.dp,
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Text(
+                    text = delayText,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = StatusColors.delay(nowDelay),
+                    maxLines = 1,
+                )
+            }
+        }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // 固定是组级属性，放当前节点行才能在收起态下解除固定
+            if (group.isFixed) {
+                IconButton(
+                    onClick = onUnfix,
+                    modifier = Modifier.size(24.dp),
+                ) {
+                    Icon(
+                        imageVector = MiuixIcons.Unpin,
+                        contentDescription = stringResource(R.string.proxy_unfix),
+                        modifier = Modifier.size(14.dp),
+                        tint = StatusColors.warning,
+                    )
+                }
+            } else {
+                Image(
+                    imageVector = MiuixIcons.Basic.ArrowRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.onSurfaceVariantSummary),
+                )
+            }
+            Spacer(Modifier.width(4.dp))
             Text(
-                text = group.name,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
+                text = group.now.ifEmpty { "-" },
+                modifier = Modifier.weight(1f),
+                fontSize = 13.sp,
                 color = MiuixTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (group.now.isNotEmpty()) {
-                Text(
-                    text = group.now,
-                    fontSize = 12.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            Spacer(Modifier.width(8.dp))
+            val layoutDirection = LocalLayoutDirection.current
+            Image(
+                imageVector = MiuixIcons.Basic.ArrowRight,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(15.dp)
+                    .graphicsLayer {
+                        scaleX = if (layoutDirection == LayoutDirection.Rtl) -1f else 1f
+                        val p = expandProgress?.floatValue ?: if (isExpanded) 1f else 0f
+                        rotationZ = lerp(0f, 90f, p)
+                    },
+                colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.onSurfaceVariantSummary),
+            )
         }
 
-        val nowDelay = group.delays[group.now]
-        if (nowDelay != null) {
-            val timeoutText = stringResource(R.string.proxy_timeout)
-            val delayText = if (nowDelay < 0) timeoutText else "${nowDelay}ms"
-            Text(
-                text = delayText,
-                fontSize = 12.sp,
-                color = StatusColors.delay(nowDelay),
-            )
-            Spacer(Modifier.width(8.dp))
-        }
-        Text(
-            text = "$visibleNodeCount",
-            fontSize = 14.sp,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        )
-        // 固定是组级属性，放组头才能在收起态下操作
-        if (group.isFixed) {
-            Spacer(Modifier.width(8.dp))
-            IconButton(
-                onClick = onUnfix,
-                modifier = Modifier.size(24.dp),
-            ) {
-                Icon(
-                    imageVector = MiuixIcons.Unpin,
-                    contentDescription = stringResource(R.string.proxy_unfix),
-                    modifier = Modifier.size(16.dp),
-                    tint = StatusColors.warning,
-                )
-            }
-        }
-        Spacer(Modifier.width(8.dp))
-        IconButton(
-            onClick = onTestDelay,
-            enabled = !isTesting,
-            modifier = Modifier.size(24.dp),
+        AnimatedVisibility(
+            visible = !isExpanded && visibleNodes.isNotEmpty(),
+            enter = fadeIn(tween(180)) + expandVertically(tween(220)),
+            exit = fadeOut(tween(120)) + shrinkVertically(tween(220)),
+            label = "groupPreviewVisibility",
         ) {
-            if (isTesting) {
-                CircularProgressIndicator(
-                    size = 14.dp,
-                    strokeWidth = 2.dp,
-                )
-            } else {
-                Icon(
-                    imageVector = MiuixIcons.Refresh,
-                    contentDescription = stringResource(R.string.proxy_test_group_delay),
-                    modifier = Modifier.size(16.dp),
-                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
+            ProxyGroupPreview(
+                group = group,
+                nodes = visibleNodes,
+                onSelectNode = onSelectNode,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProxyGroupPreview(
+    group: ProxyGroupUi,
+    nodes: List<String>,
+    onSelectNode: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val showDots = maxWidth > 16.dp * nodes.size
+        if (showDots) {
+            val gap = 4.dp
+            val dotSize = 12.dp
+            val columns = ((maxWidth + gap) / (dotSize + gap)).toInt().coerceAtLeast(1)
+            Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                nodes.chunked(columns).forEach { rowNodes ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                        rowNodes.forEach { nodeName ->
+                            val delay = group.delays[nodeName]
+                            Box(
+                                modifier = Modifier
+                                    .size(dotSize)
+                                    .squircleBackground(previewDelayColor(delay), 3.dp)
+                                    .clickable(
+                                        enabled = group.isSelectable,
+                                        interactionSource = null,
+                                        indication = null,
+                                    ) { onSelectNode(nodeName) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (nodeName == group.now) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(5.dp)
+                                            .squircleBackground(Color.White, 2.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            val counts = remember(nodes, group.delays) {
+                var good = 0
+                var medium = 0
+                var bad = 0
+                var notConnected = 0
+                nodes.forEach { nodeName ->
+                    val delay = group.delays[nodeName]
+                    when {
+                        delay == null || delay < 0 -> notConnected++
+                        delay < 200 -> good++
+                        delay < 500 -> medium++
+                        else -> bad++
+                    }
+                }
+                listOf(good, medium, bad, notConnected)
+            }
+            val colors = listOf(
+                StatusColors.healthy,
+                StatusColors.warning,
+                StatusColors.danger,
+                StatusColors.neutral,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .squircleClip(4.dp),
+            ) {
+                counts.forEachIndexed { index, count ->
+                    if (count > 0) {
+                        Box(
+                            modifier = Modifier
+                                .weight(count.toFloat())
+                                .height(8.dp)
+                                .background(colors[index]),
+                        )
+                    }
+                }
             }
         }
-        Spacer(Modifier.width(8.dp))
-        val layoutDirection = LocalLayoutDirection.current
-        Image(
-            imageVector = MiuixIcons.Basic.ArrowRight,
-            contentDescription = null,
-            modifier = Modifier
-                .size(15.dp)
-                .graphicsLayer {
-                    scaleX = if (layoutDirection == LayoutDirection.Rtl) -1f else 1f
-                    val p = expandProgress?.floatValue ?: if (isExpanded) 1f else 0f
-                    rotationZ = lerp(0f, 90f, p)
-                },
-            colorFilter = ColorFilter.tint(MiuixTheme.colorScheme.onSurfaceVariantSummary),
-        )
     }
+}
+
+@Composable
+private fun previewDelayColor(delay: Int?): Color = when {
+    delay == null || delay < 0 -> StatusColors.neutral
+    delay < 200 -> StatusColors.healthy
+    delay < 500 -> StatusColors.warning
+    else -> StatusColors.danger
 }
 
 @Composable
@@ -991,10 +1137,14 @@ private fun ProxyGroupNodesSheet(
             rows.indexOfFirst { row -> currentGroup.now in row }.takeIf { it >= 0 } ?: 0
         }
         val isTesting = currentGroup.name in testingGroups
+        val sheetListState = remember(currentGroup.name) {
+            LazyListState(firstVisibleItemIndex = activeRowIndex)
+        }
 
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(max = 620.dp)
                 .sheetContentSafePadding()
                 .sheetHeightTransition(),
         ) {
@@ -1072,40 +1222,37 @@ private fun ProxyGroupNodesSheet(
                     )
                 }
             } else {
-                key(currentGroup.name) {
-                    val sheetListState = rememberLazyListState(
-                        initialFirstVisibleItemIndex = activeRowIndex,
-                    )
-                    LazyColumn(
-                        state = sheetListState,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 520.dp),
-                        contentPadding = PaddingValues(bottom = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(
-                            items = rows,
-                            key = { row -> "${currentGroup.name}:${row.joinToString(",")}" },
-                        ) { row ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                row.forEach { proxyName ->
-                                    ProxyNodeCard(
-                                        modifier = Modifier.weight(1f),
-                                        name = proxyName,
-                                        type = currentGroup.nodeTypes[proxyName].orEmpty(),
-                                        delay = currentGroup.delays[proxyName],
-                                        isSelected = proxyName == currentGroup.now,
-                                        isFixed = proxyName == currentGroup.fixed,
-                                        isSelectable = currentGroup.isSelectable,
-                                        isTesting = proxyName in testingNodes,
-                                        onTestDelay = onTestNodeDelay,
-                                        onClick = { selected -> onSelect(currentGroup.name, selected) },
-                                    )
-                                }
-                                if (columnCount == 2 && row.size == 1) {
-                                    Spacer(Modifier.weight(1f))
-                                }
+                // 列表必须作为 Column 的加权子项拿到剩余高度，否则会被按内容高度
+                // 整体测量，视口等于全部行而无法滚动。
+                LazyColumn(
+                    state = sheetListState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false),
+                    contentPadding = PaddingValues(bottom = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(
+                        items = rows,
+                        key = { row -> "${currentGroup.name}:${row.joinToString(",")}" },
+                    ) { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            row.forEach { proxyName ->
+                                ProxyNodeCard(
+                                    modifier = Modifier.weight(1f),
+                                    name = proxyName,
+                                    type = currentGroup.nodeTypes[proxyName].orEmpty(),
+                                    delay = currentGroup.delays[proxyName],
+                                    isSelected = proxyName == currentGroup.now,
+                                    isFixed = proxyName == currentGroup.fixed,
+                                    isSelectable = currentGroup.isSelectable,
+                                    isTesting = proxyName in testingNodes,
+                                    onTestDelay = onTestNodeDelay,
+                                    onClick = { selected -> onSelect(currentGroup.name, selected) },
+                                )
+                            }
+                            if (columnCount == 2 && row.size == 1) {
+                                Spacer(Modifier.weight(1f))
                             }
                         }
                     }

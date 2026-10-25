@@ -202,10 +202,10 @@
     <string name="proxy_mode_global_hint">目前為全域模式，僅由 GLOBAL 群組決定出口。其他代理群組的選擇將在切回規則模式後生效。</string>
     <string name="proxy_refresh_icon">重新整理圖示</string>
     <string name="proxy_show_icons">顯示圖示</string>
-    <string name="proxy_hide_unavailable">隱藏不可用</string>
+    <string name="proxy_hide_unavailable">隱藏不可用節點</string>
     <string name="proxy_close_connections_on_switch">切換節點時中斷連線</string>
     <string name="proxy_single_column">單欄顯示</string>
-    <string name="proxy_two_column_layout">雙排佈局</string>
+    <string name="proxy_two_column_layout">雙列代理組</string>
     <string name="proxy_show_group_icons">顯示圖示</string>
     <string name="proxy_no_nodes">無可用節點</string>
     <string name="proxy_timeout">逾時</string>

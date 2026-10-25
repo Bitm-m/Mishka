@@ -204,10 +204,10 @@
     <string name="proxy_mode_global_hint">Global mode is active: only the GLOBAL group routes traffic. Selections in other groups take effect after switching back to rule mode.</string>
     <string name="proxy_refresh_icon">Refresh Icons</string>
     <string name="proxy_show_icons">Show Icons</string>
-    <string name="proxy_hide_unavailable">Hide Unavailable</string>
+    <string name="proxy_hide_unavailable">Hide Unavailable Nodes</string>
     <string name="proxy_close_connections_on_switch">Disconnect Connections on Node Switch</string>
     <string name="proxy_single_column">Single Column</string>
-    <string name="proxy_two_column_layout">Two-Column Layout</string>
+    <string name="proxy_two_column_layout">Two-Column Proxy Groups</string>
     <string name="proxy_show_group_icons">Show Icons</string>
     <string name="proxy_no_nodes">No available nodes</string>
     <string name="proxy_timeout">Timeout</string>
