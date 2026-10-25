@@ -22317,7 +22317,7 @@ index 93088aa..3eeddd1 100644
                          verticalAlignment = Alignment.CenterVertically,
                          horizontalArrangement = Arrangement.spacedBy(8.dp),
 diff --git a/app/src/main/kotlin/top/yukonga/mishka/ui/screen/proxy/ProxyScreen.kt b/app/src/main/kotlin/top/yukonga/mishka/ui/screen/proxy/ProxyScreen.kt
-index 73ec9ed..c145f02 100644
+index 73ec9ed..2de80c7 100644
 --- a/app/src/main/kotlin/top/yukonga/mishka/ui/screen/proxy/ProxyScreen.kt
 +++ b/app/src/main/kotlin/top/yukonga/mishka/ui/screen/proxy/ProxyScreen.kt
 @@ -12,7 +12,9 @@ import androidx.compose.animation.slideOutHorizontally
@@ -22489,36 +22489,35 @@ index 73ec9ed..c145f02 100644
                  }
              )
              .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
-@@ -896,7 +940,7 @@ private fun ProxyNodeCard(
+@@ -896,7 +940,8 @@ private fun ProxyNodeCard(
                          )
                          Spacer(Modifier.width(4.dp))
                      }
 -                    // 仅选中项开跑马灯，其余省略号截断
-+                    // 节点名不截断：超出可用宽度时走跑马灯滚动，短名保持原宽（fill = false）
++                    // 节点名超出可用宽度时走跑马灯滚动（短名不挂动画，避免大量卡片同时开启无限动画拖慢滚动）
++                    var textOverflows by remember(name) { mutableStateOf(false) }
                      Text(
                          text = name,
                          fontSize = 13.sp,
-@@ -904,19 +948,9 @@ private fun ProxyNodeCard(
+@@ -904,11 +949,16 @@ private fun ProxyNodeCard(
                          color = MiuixTheme.colorScheme.onSurface,
                          maxLines = 1,
                          softWrap = false,
 -                        overflow = if (isSelected) TextOverflow.Clip else TextOverflow.Ellipsis,
++                        overflow = if (isSelected || textOverflows) TextOverflow.Clip else TextOverflow.Ellipsis,
++                        onTextLayout = { result ->
++                            if (result.hasVisualOverflow && !textOverflows) {
++                                textOverflows = true
++                            }
++                        },
                          modifier = Modifier
                              .weight(1f, fill = false)
--                            .then(
+                             .then(
 -                                if (isSelected) {
--                                    Modifier.basicMarquee(
--                                        iterations = Int.MAX_VALUE,
--                                        initialDelayMillis = 1500,
--                                    )
--                                } else {
--                                    Modifier
--                                }
--                            ),
-+                            .basicMarquee(iterations = Int.MAX_VALUE),
-                     )
-                 }
-                 Spacer(Modifier.width(6.dp))
++                                if (isSelected || textOverflows) {
+                                     Modifier.basicMarquee(
+                                         iterations = Int.MAX_VALUE,
+                                         initialDelayMillis = 1500,
 diff --git a/app/src/main/kotlin/top/yukonga/mishka/ui/screen/settings/FileManagerEditorScreen.kt b/app/src/main/kotlin/top/yukonga/mishka/ui/screen/settings/FileManagerEditorScreen.kt
 index e6fb53f..597bb80 100644
 --- a/app/src/main/kotlin/top/yukonga/mishka/ui/screen/settings/FileManagerEditorScreen.kt
