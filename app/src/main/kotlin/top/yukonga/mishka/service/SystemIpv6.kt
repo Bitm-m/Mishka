@@ -69,14 +69,14 @@ object SystemIpv6 {
         val q = RootHelper.escapeShellSingleQuoted(script.absolutePath)
         val d = RootHelper.escapeShellSingleQuoted(dir.absolutePath)
         val log = RootHelper.escapeShellSingleQuoted(File(dir, "log").absolutePath)
-        // 关态先同步做一次对账（禁用 IPv6 + 改写 APN），返回时即已生效，设置页随后读取到的是新值；
-        // 再拉起后台常驻循环（脚本自己写 pid 文件，被新的循环替换时退出）。
+        // once 内先毫秒级同步写完 sysctl 与乐观缓存，APN/ndc 耗时操作已在 once 内脱钩后台执行；
+        // 关态再拉起后台常驻循环（脚本自己写 pid 文件，被新的循环替换时退出）。
         val cmd = if (enable) {
-            "sh $q once 1 $d >> $log 2>&1\n"
+            "sh $q once 1 $d >> $log 2>&1 </dev/null\n"
         } else {
-            "sh $q once 0 $d >> $log 2>&1\nsh $q watch 0 $d >> $log 2>&1 </dev/null &\n"
+            "sh $q once 0 $d >> $log 2>&1 </dev/null\nsh $q watch 0 $d >> $log 2>&1 </dev/null &\n"
         }
-        val code = RootHelper.runRootScriptHeredoc(cmd, 30)
+        val code = RootHelper.runRootScriptHeredoc(cmd, 15)
         Log.i(TAG, "apply enable=$enable config=$configSynced exit=$code")
         return code == 0
     }
@@ -168,8 +168,62 @@ object SystemIpv6 {
         else -> value.ifBlank { "-" }
     }
 
-    /** 读取当前首选上网 APN（root 查询，并发读取多个 subId）。失败或无 root 返回空列表。 */
+    private fun parseApnLines(raw: String): List<ApnRow> =
+        raw.lineSequence().mapNotNull { line ->
+            val parts = line.trim().split('|')
+            if (parts.size < 5 || parts[0].isBlank()) null
+            else ApnRow(parts[0], parts[1], parts[2], parts[3], parts[4])
+        }.toList()
+
+    /** 直接读取本地缓存的首选 APN（无需启动 su / app_process，毫秒级返回）。 */
+    fun readCachedPreferApn(context: Context): List<ApnRow>? {
+        val cacheFile = File(stateDir(context), "apn.current")
+        if (!cacheFile.isFile) return null
+        return runCatching { parseApnLines(cacheFile.readText(Charsets.UTF_8)) }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    /** 开关切换瞬间根据已保存的 apn.state 或目标状态立即推算 APN 协议显示，避免 UI 等待 content 查询。 */
+    fun predictApnAfterToggle(context: Context, enable: Boolean, current: List<ApnRow>?): List<ApnRow>? {
+        val base = current?.takeIf { it.isNotEmpty() } ?: readCachedPreferApn(context) ?: return null
+        if (!enable) {
+            return base.map { row ->
+                if (row.isIms) row else row.copy(protocol = "IP", roaming = "IP")
+            }
+        }
+        val saved = runCatching {
+            val stateFile = File(stateDir(context), "apn.state")
+            if (!stateFile.isFile) emptyMap()
+            else stateFile.readLines(Charsets.UTF_8).mapNotNull { line ->
+                val p = line.trim().split('|')
+                if (p.size >= 4) p[0] to (p[2].ifBlank { "IPV4V6" } to p[3].ifBlank { "IP" }) else null
+            }.toMap()
+        }.getOrDefault(emptyMap())
+        return base.map { row ->
+            if (row.isIms) row
+            else {
+                val orig = saved[row.id]
+                if (orig != null) row.copy(protocol = orig.first, roaming = orig.second)
+                else if (row.protocol.equals("IP", ignoreCase = true)) row.copy(protocol = "IPV4V6")
+                else row
+            }
+        }
+    }
+
+    /** 读取当前首选上网 APN（优先读本地缓存并后台刷新；首次无缓存时通过 root 查询）。 */
     fun readPreferApn(context: Context): List<ApnRow> {
+        readCachedPreferApn(context)?.let { cached ->
+            Thread({ runCatching { queryPreferApnViaRoot(context) } }, "system-ipv6-apn").apply {
+                isDaemon = true
+                start()
+            }
+            return cached
+        }
+        return queryPreferApnViaRoot(context)
+    }
+
+    private fun queryPreferApnViaRoot(context: Context): List<ApnRow> {
         val script = ensureScript(context)
         val q = RootHelper.escapeShellSingleQuoted(script.absolutePath)
         val d = RootHelper.escapeShellSingleQuoted(stateDir(context).absolutePath)
@@ -177,11 +231,7 @@ object SystemIpv6 {
             val process = ProcessBuilder("su", "-c", "sh $q status 0 $d")
                 .redirectErrorStream(true)
                 .start()
-            RootHelper.awaitDrained(process, 15).output.lineSequence().mapNotNull { line ->
-                val parts = line.trim().split('|')
-                if (parts.size < 5 || parts[0].isBlank()) null
-                else ApnRow(parts[0], parts[1], parts[2], parts[3], parts[4])
-            }.toList()
+            parseApnLines(RootHelper.awaitDrained(process, 15).output)
         } catch (e: Exception) {
             Log.w(TAG, "readPreferApn failed: ${e.message}")
             emptyList()

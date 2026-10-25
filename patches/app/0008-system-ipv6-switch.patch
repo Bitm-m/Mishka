@@ -189,10 +189,10 @@ index 3b878b9..887f041 100644
              val profileSecret = profileParameters?.secret
 diff --git a/app/src/main/kotlin/top/yukonga/mishka/service/SystemIpv6.kt b/app/src/main/kotlin/top/yukonga/mishka/service/SystemIpv6.kt
 new file mode 100644
-index 0000000..3df7885
+index 0000000..d139c37
 --- /dev/null
 +++ b/app/src/main/kotlin/top/yukonga/mishka/service/SystemIpv6.kt
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,240 @@
 +package top.yukonga.mishka.service
 +
 +import android.content.Context
@@ -264,14 +264,14 @@ index 0000000..3df7885
 +        val q = RootHelper.escapeShellSingleQuoted(script.absolutePath)
 +        val d = RootHelper.escapeShellSingleQuoted(dir.absolutePath)
 +        val log = RootHelper.escapeShellSingleQuoted(File(dir, "log").absolutePath)
-+        // 关态先同步做一次对账（禁用 IPv6 + 改写 APN），返回时即已生效，设置页随后读取到的是新值；
-+        // 再拉起后台常驻循环（脚本自己写 pid 文件，被新的循环替换时退出）。
++        // once 内先毫秒级同步写完 sysctl 与乐观缓存，APN/ndc 耗时操作已在 once 内脱钩后台执行；
++        // 关态再拉起后台常驻循环（脚本自己写 pid 文件，被新的循环替换时退出）。
 +        val cmd = if (enable) {
-+            "sh $q once 1 $d >> $log 2>&1\n"
++            "sh $q once 1 $d >> $log 2>&1 </dev/null\n"
 +        } else {
-+            "sh $q once 0 $d >> $log 2>&1\nsh $q watch 0 $d >> $log 2>&1 </dev/null &\n"
++            "sh $q once 0 $d >> $log 2>&1 </dev/null\nsh $q watch 0 $d >> $log 2>&1 </dev/null &\n"
 +        }
-+        val code = RootHelper.runRootScriptHeredoc(cmd, 30)
++        val code = RootHelper.runRootScriptHeredoc(cmd, 15)
 +        Log.i(TAG, "apply enable=$enable config=$configSynced exit=$code")
 +        return code == 0
 +    }
@@ -363,8 +363,62 @@ index 0000000..3df7885
 +        else -> value.ifBlank { "-" }
 +    }
 +
-+    /** 读取当前首选上网 APN（root 查询，并发读取多个 subId）。失败或无 root 返回空列表。 */
++    private fun parseApnLines(raw: String): List<ApnRow> =
++        raw.lineSequence().mapNotNull { line ->
++            val parts = line.trim().split('|')
++            if (parts.size < 5 || parts[0].isBlank()) null
++            else ApnRow(parts[0], parts[1], parts[2], parts[3], parts[4])
++        }.toList()
++
++    /** 直接读取本地缓存的首选 APN（无需启动 su / app_process，毫秒级返回）。 */
++    fun readCachedPreferApn(context: Context): List<ApnRow>? {
++        val cacheFile = File(stateDir(context), "apn.current")
++        if (!cacheFile.isFile) return null
++        return runCatching { parseApnLines(cacheFile.readText(Charsets.UTF_8)) }
++            .getOrNull()
++            ?.takeIf { it.isNotEmpty() }
++    }
++
++    /** 开关切换瞬间根据已保存的 apn.state 或目标状态立即推算 APN 协议显示，避免 UI 等待 content 查询。 */
++    fun predictApnAfterToggle(context: Context, enable: Boolean, current: List<ApnRow>?): List<ApnRow>? {
++        val base = current?.takeIf { it.isNotEmpty() } ?: readCachedPreferApn(context) ?: return null
++        if (!enable) {
++            return base.map { row ->
++                if (row.isIms) row else row.copy(protocol = "IP", roaming = "IP")
++            }
++        }
++        val saved = runCatching {
++            val stateFile = File(stateDir(context), "apn.state")
++            if (!stateFile.isFile) emptyMap()
++            else stateFile.readLines(Charsets.UTF_8).mapNotNull { line ->
++                val p = line.trim().split('|')
++                if (p.size >= 4) p[0] to (p[2].ifBlank { "IPV4V6" } to p[3].ifBlank { "IP" }) else null
++            }.toMap()
++        }.getOrDefault(emptyMap())
++        return base.map { row ->
++            if (row.isIms) row
++            else {
++                val orig = saved[row.id]
++                if (orig != null) row.copy(protocol = orig.first, roaming = orig.second)
++                else if (row.protocol.equals("IP", ignoreCase = true)) row.copy(protocol = "IPV4V6")
++                else row
++            }
++        }
++    }
++
++    /** 读取当前首选上网 APN（优先读本地缓存并后台刷新；首次无缓存时通过 root 查询）。 */
 +    fun readPreferApn(context: Context): List<ApnRow> {
++        readCachedPreferApn(context)?.let { cached ->
++            Thread({ runCatching { queryPreferApnViaRoot(context) } }, "system-ipv6-apn").apply {
++                isDaemon = true
++                start()
++            }
++            return cached
++        }
++        return queryPreferApnViaRoot(context)
++    }
++
++    private fun queryPreferApnViaRoot(context: Context): List<ApnRow> {
 +        val script = ensureScript(context)
 +        val q = RootHelper.escapeShellSingleQuoted(script.absolutePath)
 +        val d = RootHelper.escapeShellSingleQuoted(stateDir(context).absolutePath)
@@ -372,11 +426,7 @@ index 0000000..3df7885
 +            val process = ProcessBuilder("su", "-c", "sh $q status 0 $d")
 +                .redirectErrorStream(true)
 +                .start()
-+            RootHelper.awaitDrained(process, 15).output.lineSequence().mapNotNull { line ->
-+                val parts = line.trim().split('|')
-+                if (parts.size < 5 || parts[0].isBlank()) null
-+                else ApnRow(parts[0], parts[1], parts[2], parts[3], parts[4])
-+            }.toList()
++            parseApnLines(RootHelper.awaitDrained(process, 15).output)
 +        } catch (e: Exception) {
 +            Log.w(TAG, "readPreferApn failed: ${e.message}")
 +            emptyList()
@@ -384,7 +434,7 @@ index 0000000..3df7885
 +    }
 +}
 diff --git a/app/src/main/kotlin/top/yukonga/mishka/ui/screen/settings/RootSettingsScreen.kt b/app/src/main/kotlin/top/yukonga/mishka/ui/screen/settings/RootSettingsScreen.kt
-index c67bbb6..b6b6309 100644
+index c67bbb6..db874e6 100644
 --- a/app/src/main/kotlin/top/yukonga/mishka/ui/screen/settings/RootSettingsScreen.kt
 +++ b/app/src/main/kotlin/top/yukonga/mishka/ui/screen/settings/RootSettingsScreen.kt
 @@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
@@ -436,13 +486,13 @@ index c67bbb6..b6b6309 100644
 +    val hasRoot = storage.getString(StorageKeys.HAS_ROOT, "false") == "true"
 +    val systemScope = rememberCoroutineScope()
 +    var systemIpv6 by remember { mutableStateOf(SystemIpv6.isEnabled(storage)) }
-+    var apnRows by remember { mutableStateOf<List<SystemIpv6.ApnRow>?>(null) }
++    var apnRows by remember { mutableStateOf(SystemIpv6.readCachedPreferApn(context)) }
 +    val ipv6OffText = stringResource(R.string.root_system_ipv6_summary_off)
 +    val ipv6OnText = stringResource(R.string.root_system_ipv6_summary_on)
 +    val ipv6NoRootText = stringResource(R.string.root_system_ipv6_no_root)
 +    val ipv6NoApnText = stringResource(R.string.root_system_ipv6_apn_none)
 +    val ipv6ApplyFailedText = stringResource(R.string.root_system_ipv6_apply_failed)
-+    // 打开设置页时读取一次首选 APN（root 查询）；开关切换成功后再读一次。离开页面不再查询。
++    // 打开设置页时读取一次首选 APN（优先读本地缓存，后台刷新）。离开页面不再查询。
 +    LaunchedEffect(hasRoot) {
 +        if (!hasRoot) return@LaunchedEffect
 +        apnRows = withContext(Dispatchers.IO) { SystemIpv6.readPreferApn(context) }
@@ -470,7 +520,7 @@ index c67bbb6..b6b6309 100644
      var forceReapply by remember {
          mutableStateOf(storage.getString(StorageKeys.ROOT_ATTACH_FORCE_REAPPLY, "false") == "true")
      }
-@@ -329,6 +371,35 @@ fun RootSettingsScreen(
+@@ -329,6 +371,40 @@ fun RootSettingsScreen(
                      },
                  ),
              )
@@ -485,16 +535,21 @@ index c67bbb6..b6b6309 100644
 +                            summary = systemIpv6Summary,
 +                            checked = systemIpv6,
 +                            onCheckedChange = { value ->
-+                                // 先在 root 下真正执行，成功后才记录开关状态
++                                val prevValue = systemIpv6
++                                val prevApn = apnRows
++                                // 立即乐观更新开关与 APN 显示（0 延迟反馈），后台毫秒级写 sysctl/config，失败则回滚
++                                systemIpv6 = value
++                                apnRows = SystemIpv6.predictApnAfterToggle(context, value, prevApn)
 +                                systemScope.launch {
 +                                    val ok = withContext(Dispatchers.IO) { SystemIpv6.apply(context, value) }
 +                                    if (ok) {
-+                                        systemIpv6 = value
 +                                        storage.putString(StorageKeys.ROOT_SYSTEM_IPV6, value.toString())
-+                                        apnRows = withContext(Dispatchers.IO) { SystemIpv6.readPreferApn(context) }
++                                        SystemIpv6.readCachedPreferApn(context)?.let { apnRows = it }
 +                                        // 配置已改写：代理在运行中则自动重启以生效（未运行时 restartWhenReady 不做任何事）
 +                                        activeProfileId?.let { serviceController.restartWhenReady(it) }
 +                                    } else {
++                                        systemIpv6 = prevValue
++                                        apnRows = prevApn
 +                                        showToast(ipv6ApplyFailedText)
 +                                    }
 +                                }
@@ -508,95 +563,165 @@ index c67bbb6..b6b6309 100644
                      Modifier
 diff --git a/app/src/main/res/raw/system_ipv6.sh b/app/src/main/res/raw/system_ipv6.sh
 new file mode 100644
-index 0000000..a58edd1
+index 0000000..be351ad
 --- /dev/null
 +++ b/app/src/main/res/raw/system_ipv6.sh
-@@ -0,0 +1,295 @@
+@@ -0,0 +1,366 @@
 +#!/system/bin/sh
 +# Mishka 系统 IPv6 对账脚本（移植自 mihomo_box 的 system_ipv6_sync / apn4 逻辑）
-+# 由应用复制到私有目录，经 root 执行。用法：
++# 用法：
 +#   sh system_ipv6.sh once  <0|1> <状态目录>   一次性对账（1=恢复，0=禁用）
 +#   sh system_ipv6.sh watch 0     <状态目录>   常驻对账循环（关态，每 5 秒一拍）
 +#   sh system_ipv6.sh status 0    <状态目录>   输出首选 APN：id|apn|protocol|roaming|type
-+MODE="$1"
-+WANT="$2"          # 0 = 关闭系统 IPv6（默认），1 = 开启
-+STATE="$3"
-+# 写入 /proc/.../disable_ipv6 的值：关 → 1（禁用），开 → 0（恢复）
-+DIS=1
-+[ "$WANT" = "1" ] && DIS=0
-+IPV6_CONF=/proc/sys/net/ipv6/conf
-+IPV6_COOL=60
-+IPV6_TICK=5
-+IP=/system/bin/ip
-+[ -x "$IP" ] || IP=ip
-+PID_FILE="$STATE/loop.pid"
-+WANT_FILE="$STATE/want"
-+NET_FILE="$STATE/net"
-+LAST_FILE="$STATE/last"
-+APN_STATE="$STATE/apn.state"
++#   sh system_ipv6.sh stop  0     <状态目录>   停掉常驻循环
++
++ACTION=${1:-once}
++WANT=${2:-0}
++STATE=${3:-/data/local/tmp/mishka_ipv6}
++
++mkdir -p "$STATE" 2>/dev/null
 +LOG="$STATE/log"
++PID_FILE="$STATE/watch.pid"
++WANT_FILE="$STATE/ipv6.want"
++NET_FILE="$STATE/ipv6.net"
++LAST_FILE="$STATE/ipv6.last"
++APN_STATE="$STATE/apn.state"
++APN_CACHE="$STATE/apn.current"
++IPV6_CONF="/proc/sys/net/ipv6/conf"
++IPV6_COOL=60
++IP="/system/bin/ip"
++[ -x "$IP" ] || IP="ip"
++
++if [ "$WANT" = "1" ]; then DIS=0; else DIS=1; fi
 +
 +log() {
-+  echo "$(date '+%m-%d %H:%M:%S' 2>/dev/null) $*" >> "$LOG" 2>/dev/null
-+  if [ "$(wc -l < "$LOG" 2>/dev/null || echo 0)" -gt 200 ]; then
-+    tail -n 100 "$LOG" > "$LOG.tmp" 2>/dev/null && mv -f "$LOG.tmp" "$LOG" 2>/dev/null
-+  fi
-+  return 0
-+}
-+
-+# 热点 / USB 共享下游口：系统 dnsmasq 与 RA 自己管，绝不写它的 disable_ipv6
-+is_tether_if() {
-+  case "$1" in
-+    br[0-9]*|bridge*|ap[0-9]*|swlan*|softap*|rndis*|usb[0-9]*|bt-pan*|p2p*|wigig*|sipa_usb*) return 0 ;;
-+    wlan[0-9]*|eth[0-9]*)
-+      "$IP" -4 addr show dev "$1" 2>/dev/null | grep -Eq 'inet [0-9]+\.[0-9]+\.[0-9]+\.1/' && return 0 ;;
-+  esac
-+  return 1
-+}
-+
-+# 永久豁免：lo / 模板 / 蜂窝（IMS 依赖 v6，只靠 APN 协议处理）/ 热点下游
-+is_exempt_if() {
-+  case "$1" in
-+    lo|all|default) return 0 ;;
-+    rmnet*|r_rmnet*|ccmni*|wwan*|pdp*|v4-rmnet*|radio*|cellular*) return 0 ;;
-+  esac
-+  is_tether_if "$1"
++  printf '%s %s\n' "$(date '+%m-%d %H:%M:%S' 2>/dev/null)" "$*" >> "$LOG" 2>/dev/null
 +}
 +
 +setv() {
 +  [ -e "$1" ] || return 0
-+  [ "$(cat "$1" 2>/dev/null)" = "$2" ] || echo "$2" > "$1" 2>/dev/null
-+  return 0
++  [ "$(cat "$1" 2>/dev/null)" = "$2" ] && return 0
++  echo "$2" > "$1" 2>/dev/null
 +}
 +
-+# 每行：id|apn|protocol|roaming|type（同一 id 只输出一次）
-+apn_rows() {
-+  _d="$STATE/apnq.$$"
-+  mkdir -p "$_d" 2>/dev/null || return 0
-+  _proj="_id:apn:protocol:roaming_protocol:type"
-+  content query --uri content://telephony/carriers/preferapn --projection "$_proj" > "$_d/0" 2>/dev/null &
-+  for _n in 1 2 3 4; do
-+    content query --uri "content://telephony/carriers/preferapn/subId/$_n" --projection "$_proj" > "$_d/$_n" 2>/dev/null &
++# 蜂窝数据口：协议栈靠 APN 切纯 IPv4，不动内核 disable_ipv6（免得断数据 / 掉 IMS）
++is_cellular_if() {
++  case "$1" in rmnet*|ccmni*|wwan*|r_rmnet*) return 0 ;; esac
++  return 1
++}
++
++# 单次拉取热点网段关联的接口列表，避免在循环中对每块网卡重复 fork ip/grep
++_TETHER_IFACES=""
++refresh_tether_ifaces() {
++  _TETHER_IFACES=$($IP -4 -o addr show 2>/dev/null | awk '
++    /inet (192\.168\.(42|43|49|225)\.|172\.20\.10\.)/ { print $2 }
++  ')
++}
++
++# 热点下游口（Wi-Fi AP / USB 共享 / 蓝牙共享）：交还系统，保留下游设备 IPv6 能力
++is_tether_if() {
++  case "$1" in
++    ap*|softap*|wlan*ap*|swlan*|rndis*|usb*|ncm*|bt-pan*|bnep*) return 0 ;;
++    wlan*|eth*)
++      case " $_TETHER_IFACES " in
++        *" $1 "*) return 0 ;;
++      esac
++      ;;
++  esac
++  return 1
++}
++
++is_exempt_if() {
++  [ "$1" = "lo" ] && return 0
++  is_cellular_if "$1" && return 0
++  is_tether_if "$1" && return 0
++  return 1
++}
++
++fingerprint() {
++  for _p in /sys/class/net/*/operstate; do
++    [ -e "$_p" ] || continue
++    _i=${_p%/operstate}; _i=${_i##*/}
++    [ "$_i" = "lo" ] && continue
++    printf '%s=%s;' "$_i" "$(cat "$_p" 2>/dev/null)"
 +  done
-+  wait
-+  cat "$_d"/* 2>/dev/null | awk '
-+    /Row:/ && /_id=/ {
-+      id=""; apn=""; p=""; r=""; t=""
-+      for (i = 1; i <= NF; i++) {
-+        v = $i; sub(/,$/, "", v)
-+        if (v ~ /^_id=/) id = substr(v, 5)
-+        else if (v ~ /^apn=/) apn = substr(v, 5)
-+        else if (v ~ /^protocol=/) p = substr(v, 10)
-+        else if (v ~ /^roaming_protocol=/) r = substr(v, 18)
-+        else if (v ~ /^type=/) t = substr(v, 6)
-+      }
-+      if (id != "" && !(id in seen)) { seen[id] = 1; print id "|" apn "|" p "|" r "|" t }
-+    }'
-+  rm -rf "$_d" 2>/dev/null
-+  return 0
 +}
 +
-+# 改协议后需重新附着数据才生效：后台自动开关一次移动数据
++# ---------------- APN 协议（上网 APN → IP，IMS 不动） ----------------
++
++parse_apn_out() {
++  awk '
++    /^Row:/ {
++      id=""; apn=""; p=""; r=""; t=""
++      for (i=1; i<=NF; i++) {
++        if ($i ~ /^_id=/)              { sub(/^_id=/, "", $i); id=$i }
++        else if ($i ~ /^apn=/)         { sub(/^apn=/, "", $i); apn=$i }
++        else if ($i ~ /^protocol=/)    { sub(/^protocol=/, "", $i); p=$i }
++        else if ($i ~ /^roaming_protocol=/) { sub(/^roaming_protocol=/, "", $i); r=$i }
++        else if ($i ~ /^type=/)        { sub(/^type=/, "", $i); t=$i }
++      }
++      if (id != "" && id != "NULL" && !seen[id]++) print id "|" apn "|" p "|" r "|" t
++    }
++  '
++}
++
++apn_rows() {
++  _proj="_id:apn:protocol:roaming_protocol:type"
++  # 优先查默认主卡 preferapn（仅启动 1 个 app_process），为空时才回退查双卡 subId/1..2
++  _out=$(content query --uri content://telephony/carriers/preferapn --projection "$_proj" 2>/dev/null | parse_apn_out)
++  if [ -z "$_out" ]; then
++    _d="$STATE/apnq.$$"
++    mkdir -p "$_d" 2>/dev/null || return 0
++    for _n in 1 2; do
++      content query --uri "content://telephony/carriers/preferapn/subId/$_n" --projection "$_proj" > "$_d/$_n" 2>/dev/null &
++    done
++    wait
++    _out=$(cat "$_d"/* 2>/dev/null | parse_apn_out)
++    rm -rf "$_d" 2>/dev/null
++  fi
++  if [ -n "$_out" ]; then
++    printf '%s\n' "$_out" > "$APN_CACHE.tmp" 2>/dev/null &&
++      chmod 0644 "$APN_CACHE.tmp" 2>/dev/null &&
++      mv -f "$APN_CACHE.tmp" "$APN_CACHE" 2>/dev/null
++    printf '%s\n' "$_out"
++  fi
++}
++
++# 翻转开关瞬间先乐观更新缓存文件，保证 UI 读取 0 等待
++apn_optimistic_cache() {
++  [ -s "$APN_CACHE" ] || return 0
++  if [ "$WANT" = "0" ]; then
++    while IFS='|' read -r _id _apn _p _r _t; do
++      [ -z "$_id" ] && continue
++      case ",$_t," in *,[iI][mM][sS],*) continue ;; esac
++      if [ "$_p" != "IP" ] || [ "$_r" != "IP" ]; then
++        if ! grep -q "^$_id|" "$APN_STATE" 2>/dev/null; then
++          printf '%s|%s|%s|%s\n' "$_id" "$_apn" "$_p" "$_r" >> "$APN_STATE"
++          chmod 0644 "$APN_STATE" 2>/dev/null
++        fi
++      fi
++    done < "$APN_CACHE"
++    awk -F'|' 'BEGIN{OFS="|"} {
++      t="," tolower($5) ","
++      if (index(t, ",ims,") == 0) { $3="IP"; $4="IP" }
++      print
++    }' "$APN_CACHE" > "$APN_CACHE.tmp" 2>/dev/null &&
++      chmod 0644 "$APN_CACHE.tmp" 2>/dev/null &&
++      mv -f "$APN_CACHE.tmp" "$APN_CACHE" 2>/dev/null
++  else
++    [ -f "$APN_STATE" ] || return 0
++    awk -F'|' 'BEGIN{OFS="|"}
++      NR==FNR { orig_p[$1]=$3; orig_r[$1]=$4; next }
++      {
++        if ($1 in orig_p) { $3=orig_p[$1]; $4=orig_r[$1] }
++        print
++      }
++    ' "$APN_STATE" "$APN_CACHE" > "$APN_CACHE.tmp" 2>/dev/null &&
++      chmod 0644 "$APN_CACHE.tmp" 2>/dev/null &&
++      mv -f "$APN_CACHE.tmp" "$APN_CACHE" 2>/dev/null
++  fi
++}
++
 +apn_reattach() {
 +  command -v svc >/dev/null 2>&1 || { log "WARN 无 svc，请手动开关一次飞行模式使 APN 协议生效"; return 0; }
 +  log "重新附着数据（svc data off/on）"
@@ -604,77 +729,67 @@ index 0000000..a58edd1
 +  return 0
 +}
 +
-+# 「系统 IPv6=关」：上网 APN 协议改为 IP（幂等；只写漂移的行；跳过 IMS）
-+# 写入后不信任 content 的输出文字，而是重新查询同一行，以实际值为准。
 +apn_apply() {
++  command -v content >/dev/null 2>&1 || return 0
 +  _rows=$(apn_rows)
-+  if [ -z "$_rows" ]; then
-+    log "WARN 未查询到首选 APN，未改写（可手动把 APN 协议设为 IPv4，效果相同）"
-+    return 1
-+  fi
-+  _changed=0; _fail=0
++  [ -z "$_rows" ] && return 0
++  _changed=0
 +  while IFS='|' read -r _id _apn _p _r _t; do
-+    [ -n "$_id" ] || continue
-+    case "$_t" in *ims*) log "跳过 IMS 承载 id=$_id apn=$_apn"; continue ;; esac
++    [ -z "$_id" ] && continue
++    case ",$_t," in *,[iI][mM][sS],*) continue ;; esac
 +    if [ "$_p" = "IP" ] && [ "$_r" = "IP" ]; then continue; fi
-+    grep -q "^$_id|" "$APN_STATE" 2>/dev/null || echo "$_id|$_apn|$_p|$_r" >> "$APN_STATE"
-+    _res=$(content update --uri content://telephony/carriers --where "_id=$_id" --bind protocol:s:IP --bind roaming_protocol:s:IP 2>&1)
-+    _now=$(apn_rows | grep "^$_id|" | head -1)
-+    case "$_now" in
-+      *"|IP|IP|"*) log "id=$_id apn=$_apn: $_p/$_r -> IP/IP（已校验）"; _changed=1 ;;
-+      *) log "WARN id=$_id apn=$_apn 写入后仍为 [$_now]，content 输出：$_res"; _fail=1 ;;
-+    esac
-+  done <<APN_ROWS_END
++    if ! grep -q "^$_id|" "$APN_STATE" 2>/dev/null; then
++      printf '%s|%s|%s|%s\n' "$_id" "$_apn" "$_p" "$_r" >> "$APN_STATE"
++      chmod 0644 "$APN_STATE" 2>/dev/null
++    fi
++    if content update --uri content://telephony/carriers --where "_id=$_id" \
++         --bind protocol:s:IP --bind roaming_protocol:s:IP >/dev/null 2>&1; then
++      log "APN 改为 IPv4：$_apn (id=$_id) $_p/$_r -> IP/IP"
++      _changed=1
++    else
++      log "WARN APN 写入未生效：$_apn (id=$_id)"
++    fi
++  done <<EOF
 +$_rows
-+APN_ROWS_END
-+  [ "$_changed" = "1" ] && apn_reattach
-+  [ "$_fail" = "0" ]
-+}
-+
-+# 关态周期校验：首选 APN 若被系统或运营商写回 IPv4/IPv6，则重新改写（每 60 秒一次，见 watch 循环）
-+apn_drift_check() {
-+  _rows=$(apn_rows)
-+  [ -n "$_rows" ] || return 0
-+  _bad=$(echo "$_rows" | awk -F'|' '$1 != "" && $5 !~ /ims/ && ($3 != "IP" || $4 != "IP") {print $1}')
-+  if [ -n "$_bad" ]; then
-+    log "APN 协议漂移（id=$(echo $_bad | tr '\n' ' ')），重新改写"
-+    apn_apply
++EOF
++  if [ "$_changed" = "1" ]; then
++    apn_optimistic_cache
++    apn_reattach
 +  fi
 +  return 0
 +}
 +
-+# 「系统 IPv6=开」：按状态文件还原 protocol / roaming_protocol
 +apn_restore() {
 +  [ -f "$APN_STATE" ] || return 0
-+  _fail=0; _changed=0
++  command -v content >/dev/null 2>&1 || return 0
++  _changed=0; _fail=0
 +  while IFS='|' read -r _id _apn _p _r; do
-+    [ -n "$_id" ] || continue
-+    _res=$(content update --uri content://telephony/carriers --where "_id=$_id" --bind "protocol:s:$_p" --bind "roaming_protocol:s:$_r" 2>&1)
-+    # 同 apn_apply：以重新查询到的实际值为准，不解析 content 的输出文字
-+    _now=$(apn_rows | grep "^$_id|" | head -1)
-+    case "$_now" in
-+      "$_id|$_apn|$_p|$_r|"*) log "还原 id=$_id apn=$_apn: $_p/$_r（已校验）"; _changed=1 ;;
-+      *) log "WARN 还原 id=$_id apn=$_apn 后仍为 [$_now]，content 输出：$_res"; _fail=1 ;;
-+    esac
++    [ -z "$_id" ] && continue
++    [ -z "$_p" ] && _p="IPV4V6"
++    [ -z "$_r" ] && _r="IP"
++    if content update --uri content://telephony/carriers --where "_id=$_id" \
++         --bind "protocol:s:$_p" --bind "roaming_protocol:s:$_r" >/dev/null 2>&1; then
++      log "APN 已还原：$_apn (id=$_id) -> $_p/$_r"
++      _changed=1
++    else
++      log "WARN APN 还原未生效：$_apn (id=$_id)"
++      _fail=1
++    fi
 +  done < "$APN_STATE"
++  if [ "$_changed" = "1" ]; then
++    apn_optimistic_cache
++  fi
 +  [ "$_fail" = "0" ] && rm -f "$APN_STATE" 2>/dev/null
 +  [ "$_changed" = "1" ] && apn_reattach
 +  return 0
 +}
 +
-+# 网络指纹 = 路由表 + 网卡集合（切网 / 飞行模式 / 换卡时变化）
-+fingerprint() {
-+  _cur=""
-+  while IFS= read -r _l || [ -n "$_l" ]; do _cur="$_cur$_l "; done < /proc/net/route 2>/dev/null
-+  for _f in "$IPV6_CONF"/*/disable_ipv6; do
-+    [ -e "$_f" ] || continue
-+    _i=${_f%/disable_ipv6}; _cur="$_cur${_i##*/} "
-+  done
-+  printf '%s' "$_cur"
-+}
++# ---------------- 非蜂窝网卡 sysctl 对账 ----------------
 +
 +sync_once() {
 +  [ -d "$IPV6_CONF" ] || return 0
++  refresh_tether_ifaces
++
 +  # 热点下游若被旧版写成 disable_ipv6=1，交还系统
 +  for _f in "$IPV6_CONF"/*/disable_ipv6; do
 +    [ -e "$_f" ] || continue
@@ -716,14 +831,7 @@ index 0000000..a58edd1
 +  fi
 +  [ "$_need" = "1" ] || return 0
 +
-+  # 蜂窝侧：关 → 改写 APN（翻转或网络变化都复查）；开 → 翻转时还原
-+  if [ "$WANT" = "0" ]; then
-+    if [ "$_flip" = "1" ] || [ "$_netchg" = "1" ]; then apn_apply; fi
-+  else
-+    if [ "$_flip" = "1" ]; then apn_restore; fi
-+  fi
-+
-+  # 非蜂窝、非豁免网卡：只写值不对的（lo 跳过）
++  # 第一步（毫秒级同步完成）：立即改写非蜂窝、非豁免网卡 sysctl 并落盘状态
 +  _n=0; _changed=""
 +  for _f in "$IPV6_CONF"/*/disable_ipv6; do
 +    [ -e "$_f" ] || continue
@@ -749,19 +857,6 @@ index 0000000..a58edd1
 +    fi
 +  done
 +
-+  # 开启立即生效：ndc 通知 netd；蜂窝口 down/up（wlan 不动，免得断 Wi-Fi）
-+  if [ "$WANT" = "1" ] && [ -n "$_changed" ]; then
-+    if command -v ndc >/dev/null 2>&1; then
-+      for _i in $_changed; do ndc interface ipv6 "$_i" enable >/dev/null 2>&1; done
-+    fi
-+    for _i in $_changed; do
-+      case "$_i" in rmnet*|ccmni*|wwan*|r_rmnet*) "$IP" link set "$_i" down 2>/dev/null ;; esac
-+    done
-+    for _i in $_changed; do
-+      case "$_i" in rmnet*|ccmni*|wwan*|r_rmnet*) "$IP" link set "$_i" up 2>/dev/null ;; esac
-+    done
-+  fi
-+
 +  printf '%s' "$WANT" > "$WANT_FILE"
 +  printf '%s' "$_cur" > "$NET_FILE"
 +  if [ "$_drift" = "1" ]; then
@@ -771,6 +866,34 @@ index 0000000..a58edd1
 +  if [ "$_n" -gt 0 ]; then
 +    if [ "$WANT" = "1" ]; then _w=开; else _w=关; fi
 +    log "系统 IPv6 对账（$_w）：应用 $_n 块网卡"
++  fi
++
++  if [ "$_flip" = "1" ]; then
++    apn_optimistic_cache
++  fi
++
++  # 第二步（耗时操作：content 改写 APN + ndc 通知 netd）：
++  # once 模式下放后台异步执行，避免阻塞 UI 开关切换数秒；watch 循环中顺序执行即可
++  _do_slow_work() {
++    if [ "$WANT" = "0" ]; then
++      if [ "$_flip" = "1" ] || [ "$_netchg" = "1" ]; then apn_apply; fi
++    else
++      if [ "$_flip" = "1" ]; then apn_restore; fi
++    fi
++
++    if [ "$WANT" = "1" ] && [ -n "$_changed" ]; then
++      if command -v ndc >/dev/null 2>&1; then
++        for _i in $_changed; do
++          case "$_i" in wlan*|eth*|ap*|p2p*) ndc interface ipv6 "$_i" enable >/dev/null 2>&1 ;; esac
++        done
++      fi
++    fi
++  }
++
++  if [ "$ACTION" = "once" ]; then
++    ( _do_slow_work ) </dev/null >>"$LOG" 2>&1 &
++  else
++    _do_slow_work
 +  fi
 +  return 0
 +}
@@ -782,8 +905,7 @@ index 0000000..a58edd1
 +  return 0
 +}
 +
-+mkdir -p "$STATE" 2>/dev/null
-+case "$MODE" in
++case "$ACTION" in
 +  once)
 +    kill_loop
 +    sync_once
@@ -791,19 +913,23 @@ index 0000000..a58edd1
 +  watch)
 +    kill_loop
 +    echo "$$" > "$PID_FILE"
-+    log "常驻对账启动（pid $$，${IPV6_TICK}s 一拍）"
-+    # 被新的 watch / once 替换（PID 文件变化）时退出
-+    _tick=0
-+    while [ "$(cat "$PID_FILE" 2>/dev/null)" = "$$" ]; do
++    log "常驻对账启动（pid=$$，want=$WANT）"
++    while :; do
++      [ "$(cat "$PID_FILE" 2>/dev/null)" = "$$" ] || exit 0
 +      sync_once
-+      _tick=$((_tick + 1))
-+      # 关态每 12 拍（约 60 秒）校验一次 APN；开态不做
-+      if [ "$WANT" = "0" ] && [ $((_tick % 12)) -eq 0 ]; then apn_drift_check; fi
-+      sleep "$IPV6_TICK"
++      sleep 5
 +    done
 +    ;;
 +  status)
-+    apn_rows
++    if [ -s "$APN_CACHE" ]; then
++      cat "$APN_CACHE"
++      ( apn_rows >/dev/null 2>&1 ) </dev/null >/dev/null 2>&1 &
++    else
++      apn_rows
++    fi
++    ;;
++  stop)
++    kill_loop
 +    ;;
 +esac
 +exit 0

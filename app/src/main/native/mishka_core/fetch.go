@@ -144,7 +144,12 @@ func runFetchAndValid(
 
 	patchProvidersPath(rawCfg, workDir)
 
-	prefetchProviders(ctx, token, rawCfg, effectiveUA, workDir, result)
+	// 仅在远程 URL 订阅导入/更新阶段（processing 目录）预取 provider；
+	// 编辑器右上角保存本地校验（imported 目录，rawURL 为空）及本地文件配置只做内存语法/结构校验，
+	// 避免因 provider 走内部代理解析或不可达而阻塞保存数十秒。
+	if isValidationProvidersPath(workDir) && rawURL != "" {
+		prefetchProviders(ctx, token, rawCfg, effectiveUA, workDir, result)
+	}
 
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -396,6 +401,9 @@ func prefetchProviders(ctx context.Context, token int32, cfg *config.RawConfig, 
 		urlStr, _ := provider["url"].(string)
 		dest, _ := provider["path"].(string)
 		if urlStr == "" || dest == "" {
+			return
+		}
+		if u, err := url.Parse(urlStr); err != nil || u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1" {
 			return
 		}
 		if _, err := os.Stat(dest); err == nil {

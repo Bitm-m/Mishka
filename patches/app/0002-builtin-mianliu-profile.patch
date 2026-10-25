@@ -162,10 +162,10 @@ index 91a7411..cb4cf98 100644
      }
 diff --git a/app/src/main/res/raw/builtin_mianliu.yaml b/app/src/main/res/raw/builtin_mianliu.yaml
 new file mode 100644
-index 0000000..dfe1b56
+index 0000000..3f801d0
 --- /dev/null
 +++ b/app/src/main/res/raw/builtin_mianliu.yaml
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,294 @@
 +mixed-port: 7890
 +tproxy-port: 7893
 +bind-address: "*"
@@ -177,10 +177,26 @@ index 0000000..dfe1b56
 +unified-delay: true
 +tcp-concurrent: true
 +
++keep-alive-interval: 30
++keep-alive-idle: 15
++disable-keep-alive: false
++
 +external-controller: 0.0.0.0:9090
 +secret: ""
 +external-ui: ui
 +external-ui-url: "https://v6.gh-proxy.org/https://github.com/Zephyruso/zashboard/archive/refs/heads/gh-pages-no-fonts.zip"
++
++lgbm-auto-update: true
++lgbm-update-interval: 72
++lgbm-url: "https://v6.gh-proxy.org/https://github.com/vernesong/mihomo/releases/download/LightGBM-Model/Model-large.bin"
++
++geo-auto-update: true
++geo-update-interval: 24
++geox-url:
++  geoip: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
++  geosite: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat"
++  mmdb: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/country.mmdb"
++  asn: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/GeoLite2-ASN.mmdb"
 +
 +profile:
 +  store-selected: true
@@ -228,6 +244,7 @@ index 0000000..dfe1b56
 +dns:
 +  enable: true
 +  listen: 0.0.0.0:1053
++  ipv6: false
 +  respect-rules: true
 +  enhanced-mode: fake-ip
 +  fake-ip-range: 198.18.0.1/16
@@ -255,7 +272,7 @@ index 0000000..dfe1b56
 +  - { name: 直连出口, type: direct }
 +
 +代理合集: &providers { interval: 3600, proxy: 订阅更新, health-check: { enable: true, url: https://www.gstatic.com/generate_204, interval: 86400, timeout: 2000 } }
-+混淆覆写: &host { override-expr: ['.servername = "填免流混淆"', '.sni = .servername', '(select(.network == "ws") | .["ws-opts"].headers.Host) = .servername', '(select(.network == "http") | .["http-opts"].headers.Host) = [.servername]', '(select(.network == "h2") | .["h2-opts"].headers.Host) = [.servername]', '(select(.network == "xhttp") | .["xhttp-opts"].headers.Host) = .servername', '(select(.type == "cns") | .headers.Host) = .servername'] }
++混淆覆写: &host { override-expr: ['.servername = "v.qq.com"', '.sni = .servername', '(select(.network == "ws") | .["ws-opts"].headers.Host) = .servername', '(select(.network == "http") | .["http-opts"].headers.Host) = [.servername]', '(select(.network == "h2") | .["h2-opts"].headers.Host) = [.servername]', '(select(.network == "xhttp") | .["xhttp-opts"].headers.Host) = .servername', '(select(.type == "cns") | .headers.Host) = .servername'] }
 +proxy-providers:
 +  百度直连:
 +    type: http
@@ -285,7 +302,7 @@ index 0000000..dfe1b56
 +  非免订阅:
 +    type: http
 +    <<: *providers
-+    url: "https://raw.githubusercontent.com/LancelotRar/free-subs/refs/heads/main/src/clash-lancelot.yaml"
++    url: http://127.0.0.1
 +    override: { additional-prefix: "非免订阅/", dialer-proxy: 链式代理 }
 +  非免节点:
 +    type: file
@@ -296,76 +313,120 @@ index 0000000..dfe1b56
 +proxy-groups:
 +  - name: 国外出口
 +    type: select
-+    exclude-filter: 中国|官网|剩余|到期|家宽|江苏|镇江|浙江|杭州|常州|南京|北京|上海|广东|广州|苏州|杭州|福州|扬州|贵州|兰州|徐州|郑州|广西|河南|河北|重庆|南宁|宿迁|沈阳|四川|安徽|深圳|辽宁|济南|九江|长沙|昆明|武汉|陕西|西宁|芜湖|天津|南昌|成都|山西|太原|保定|湖南|湖北|德阳|山东|十堰|青岛|合肥|云南|西安|内蒙古
-+    include-all-providers: true
++    proxies: [香港, 台湾, 日本, 韩国, 新加坡, 美国, 其它]
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/Global.png
++
 +  - name: 国内出口
 +    type: select
-+    proxies:
-+      - 百度直连
-+      - 钉钉直连
-+      - 国内节点
-+      - 直连出口
++    proxies: [百度直连, 钉钉直连, 中国, 直连出口]
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/China.png
++
 +  - name: 百度直连
 +    type: select
-+    use:
-+      - 百度直连
++    use: [百度直连]
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/baidu.png
++
 +  - name: 钉钉直连
 +    type: select
-+    use:
-+      - 钉钉直连
++    use: [钉钉直连]
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/dingtalk.png
++
 +  - name: 游戏UDP
 +    type: select
-+    proxies:
-+      - 国内节点
-+      - 直连出口
-+    use:
-+      - CNS订阅
++    proxies: [中国, 直连出口]
++    use: [CNS订阅]
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/GAME.png
++
 +  - name: 全部UDP
 +    type: select
-+    proxies:
-+      - PASS
-+      - 国内节点
-+      - 直连出口
-+    use:
-+      - CNS订阅
-+  - name: 国内节点
-+    type: select
-+    use:
-+      - 免流订阅
-+      - 免流节点
-+      - 非免订阅
-+      - 非免节点
-+    filter: 中国|江苏|镇江|浙江|杭州|常州|南京|北京|上海|广东|广州|苏州|杭州|福州|扬州|贵州|兰州|徐州|郑州|广西|河南|河北|重庆|南宁|宿迁|沈阳|四川|安徽|深圳|辽宁|济南|九江|长沙|昆明|武汉|陕西|西宁|芜湖|天津|南昌|成都|山西|太原|保定|湖南|湖北|德阳|山东|十堰|青岛|合肥|云南|西安|内蒙古
++    proxies: [PASS, 中国, 直连出口]
++    use: [CNS订阅]
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/Kache.png
++
 +  - name: 链式代理
 +    type: select
-+    use:
-+      - 免流订阅
-+    proxies:
-+      - 百度直连
-+      - 钉钉直连
++    use: [免流订阅]
++    proxies: [百度直连,钉钉直连]
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/Final.png
++
 +  - name: 订阅更新
 +    type: select
-+    proxies:
-+      - 国外出口
-+      - 国内出口
-+      - 直连出口
++    proxies: [国外出口, 国内出口, 直连出口]
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/Skicat.png
++
 +  - name: DNS出口
 +    type: select
-+    proxies:
-+      - 百度直连
-+      - 钉钉直连
++    proxies: [百度直连, 钉钉直连]
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/Static.png
++
 +  - name: 广告出口
 +    type: select
-+    proxies:
-+      - PASS
-+      - REJECT
++    proxies: [PASS, REJECT]
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/Adblock.png
++
++  - name: 中国
++    type: select
++    include-all: true
++    exclude-type: direct|Http
++    filter: "江苏|浙江|杭州|常州|南京|北京|上海|广东|广州|苏州|杭州|福州|扬州|贵州|兰州|徐州|郑州|广西|河南|河北|重庆|南宁|宿迁|沈阳|四川|安徽|深圳|辽宁|济南|九江|长沙|昆明|武汉|陕西|西宁|芜湖|天津|南昌|成都|山西|太原|保定|湖南|湖北|德阳|山东|十堰|青岛|合肥|云南|西安|内蒙古|青岛"
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/CN.png
++
++  - name: 香港
++    type: select
++    include-all: true
++    exclude-type: direct
++    filter: "(?i)港|hk|hongkong|hong kong"
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/HK.png
++
++  - name: 台湾
++    type: select
++    include-all: true
++    exclude-type: direct
++    filter: "(?i)台|tw|taiwan"
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/TW.png
++
++  - name: 日本
++    type: select
++    include-all: true
++    exclude-type: direct
++    filter: "(?i)日|jp|japan"
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/JP.png
++
++  - name: 韩国
++    type: select
++    include-all: true
++    exclude-type: direct
++    filter: "(?i)韩|kr|korea"
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/KR.png
++
++  - name: 新加坡
++    type: select
++    include-all: true
++    exclude-type: direct
++    filter: "(?i)(新|sg|singapore)"
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/SG.png
++
++  - name: 美国
++    type: select
++    include-all: true
++    exclude-type: direct
++    filter: "(?i)美|us|unitedstates|united states"
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/US.png
++
++  - name: 其它
++    type: select
++    include-all: true
++    exclude-type: direct|dns
++    filter: "(?i)^(?!.*(?:🇭🇰|🇨🇳|🇯🇵|🇰🇷|🇸🇬|🇺🇸|港|hk|hongkong|台|tw|taiwan|日|jp|japan|韩|kr|korea|新|sg|singapore|美|us|unitedstates)).*"
++    exclude-filter: "官网|剩余|到期|江苏|浙江|杭州|常州|南京|北京|上海|广东|广州|苏州|杭州|福州|扬州|贵州|兰州|徐州|郑州|广西|河南|河北|重庆|南宁|宿迁|沈阳|四川|安徽|深圳|辽宁|济南|九江|长沙|昆明|武汉|陕西|西宁|芜湖|天津|南昌|成都|山西|太原|保定|湖南|湖北|德阳|山东|十堰|青岛|合肥|云南|西安|内蒙古"
++    icon: https://fastly.jsdelivr.net/gh/Orz-3/mini@master/Color/XD.png
 +
 +域名集: &domain { type: http, interval: 86400, proxy: 订阅更新, behavior: domain, format: mrs }
 +地址集: &ipcidr { type: http, interval: 86400, proxy: 订阅更新, behavior: ipcidr, format: mrs }
 +
 +rule-providers:
 +  排除域名:
-+    <<: *domain 
++    <<: *domain
 +    url: "https://v6.gh-proxy.org/https://github.com/DustinWin/ruleset_geodata/releases/download/mihomo-ruleset/fakeip-filter.mrs"
 +  广告域名:
 +    <<: *domain
@@ -389,8 +450,7 @@ index 0000000..dfe1b56
 +rules:
 +  - DST-PORT,53,DNS_Hijack
 +  - AND,(NETWORK,UDP),(OR,(DST-PORT,443/3478/5349/19302),(RULE-SET,本机地址)),REJECT
-+  # 如果遇到某些软件出现跳点就取消下面注释(大概也许可能应该或许有.用)
-+  #  - DOMAIN-REGEX,(wswup.cdn.huya.com)|(cdnws.api.huya.com)|(p2p)|(stun)|(pcdn)|(mcdn)|(torrent)|(tracker)|(httpdns),REJECT-DROP
++  - DOMAIN-REGEX,(wswup.cdn.huya.com)|(cdnws.api.huya.com)|(p2p)|(stun)|(pcdn)|(mcdn)|(torrent)|(tracker)|(httpdns),REJECT-DROP
 +  - RULE-SET,广告域名,广告出口
 +  - RULE-SET,海外域名,国外出口 
 +  - AND,(NETWORK,UDP),(PROCESS-NAME-REGEX,(com.tencent.tmgp.sgame)|(com.tencent.tmgp.cf)),游戏UDP
@@ -400,4 +460,3 @@ index 0000000..dfe1b56
 +  - RULE-SET,本机地址,直连出口
 +  - MATCH,国外出口
 +  - MATCH,REJECT
-\ No newline at end of file
