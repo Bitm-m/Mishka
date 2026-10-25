@@ -155,7 +155,11 @@ private val SortResIds = listOf(
 )
 
 private sealed interface ProxyDisplayItem {
-    data class ProviderHeader(val provider: String) : ProxyDisplayItem
+    data class ProviderHeader(
+        val provider: String,
+        val firstNodeRowIndex: Int,
+    ) : ProxyDisplayItem
+
     data class NodeRow(
         val row: ImmutableList<String>,
         val nodeRowIndex: Int,
@@ -199,7 +203,10 @@ private fun proxyDisplayItems(
         val provider = group.nodeProviders[row.firstOrNull().orEmpty()].orEmpty()
         if (provider != lastProvider) {
             if (provider.isNotEmpty()) {
-                items += ProxyDisplayItem.ProviderHeader(provider)
+                items += ProxyDisplayItem.ProviderHeader(
+                    provider = provider,
+                    firstNodeRowIndex = index,
+                )
             }
             lastProvider = provider
         }
@@ -735,27 +742,40 @@ fun ProxyScreen(
                             displayItems.forEach { displayItem ->
                                 when (displayItem) {
                                     is ProxyDisplayItem.ProviderHeader -> {
-                                        // 提供商标题只在完全展开后出现，避免收起动画中残留一截标题高度
-                                        if (currentFraction >= 0.99f) {
-                                            item(
-                                                key = "provider:${group.name}:${displayItem.provider}",
-                                                contentType = "proxy_provider_header",
+                                        item(
+                                            key = "provider:${group.name}:${displayItem.provider}",
+                                            contentType = "proxy_provider_header",
+                                        ) {
+                                            CardSegment(
+                                                isFirst = false,
+                                                isLast = false,
+                                                modifier = Modifier
+                                                    .animateItem(placementSpec = null)
+                                                    .clipToBounds(),
+                                                insidePadding = PaddingValues(
+                                                    start = 16.dp,
+                                                    end = 16.dp,
+                                                ),
                                             ) {
-                                                CardSegment(
-                                                    isFirst = false,
-                                                    isLast = false,
+                                                // 标题从展开第一帧就随进度同步长出，不等完全展开再插入，
+                                                // 避免动画结束时突然多一行造成视觉卡顿
+                                                val expand = groupExpandProgress?.floatValue ?: currentFraction
+                                                val revealedRows = rowCount * expand
+                                                val headerFraction = if (displayItem.firstNodeRowIndex == 0) {
+                                                    revealedRows.coerceIn(0f, 1f)
+                                                } else {
+                                                    (revealedRows - displayItem.firstNodeRowIndex + 1f)
+                                                        .coerceIn(0f, 1f)
+                                                }
+                                                Box(
                                                     modifier = Modifier
-                                                        .animateItem(placementSpec = null)
+                                                        .fillMaxWidth()
+                                                        .height(36.dp * headerFraction)
                                                         .clipToBounds(),
-                                                    insidePadding = PaddingValues(
-                                                        start = 16.dp,
-                                                        end = 16.dp,
-                                                        top = 12.dp,
-                                                        bottom = 4.dp,
-                                                    ),
                                                 ) {
                                                     Text(
                                                         text = displayItem.provider,
+                                                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                                                         fontSize = 13.sp,
                                                         fontWeight = FontWeight.SemiBold,
                                                         color = MiuixTheme.colorScheme.onSurface,
@@ -1183,36 +1203,31 @@ private fun ProxyGroupGridCard(
         else -> "$nowDelay"
     }
 
+    val showCardIcon = showIcon && group.icon.isNotEmpty()
+
     Box(
         modifier = modifier
-            .heightIn(min = 96.dp)
+            .height(80.dp)
             .squircleSurface(color = MiuixTheme.colorScheme.surfaceContainer, cornerRadius = 16.dp)
             .clickable {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
-            .padding(horizontal = 12.dp, vertical = 12.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            Row(verticalAlignment = Alignment.Top) {
-                MarqueeText(
-                    text = group.name,
-                    modifier = Modifier.weight(1f),
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MiuixTheme.colorScheme.onSurface,
-                )
-                if (showIcon && group.icon.isNotEmpty()) {
-                    Spacer(Modifier.width(8.dp))
-                    GroupIcon(
-                        icon = group.icon,
-                        name = group.name,
-                    )
-                }
-            }
+            // 图标浮在右上角，不占首行高度；开关图标时三行文字位置保持不变（对齐 zashboard 移动端卡片）
+            val iconReserve = if (showCardIcon) 38.dp else 0.dp
+            MarqueeText(
+                text = group.name,
+                modifier = Modifier.padding(end = iconReserve),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = MiuixTheme.colorScheme.onSurface,
+            )
             Text(
                 text = "${group.type.uppercase()} · $availableNodeCount/${group.all.size}",
-                modifier = Modifier.padding(top = 5.dp),
+                modifier = Modifier.padding(top = 3.dp, end = iconReserve),
                 fontSize = 11.sp,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 maxLines = 1,
@@ -1273,6 +1288,14 @@ private fun ProxyGroupGridCard(
                         )
                     }
                 }
+            }
+        }
+        if (showCardIcon) {
+            Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                GroupIcon(
+                    icon = group.icon,
+                    name = group.name,
+                )
             }
         }
     }
