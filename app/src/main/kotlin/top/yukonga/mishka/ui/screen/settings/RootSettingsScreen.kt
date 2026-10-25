@@ -154,16 +154,18 @@ fun RootSettingsScreen(
     val hasRoot = storage.getString(StorageKeys.HAS_ROOT, "false") == "true"
     val systemScope = rememberCoroutineScope()
     var systemIpv6 by remember { mutableStateOf(SystemIpv6.isEnabled(storage)) }
-    var apnRows by remember { mutableStateOf(SystemIpv6.readCachedPreferApn(context)) }
+    var apnRows by remember { mutableStateOf<List<SystemIpv6.ApnRow>?>(null) }
     val ipv6OffText = stringResource(R.string.root_system_ipv6_summary_off)
     val ipv6OnText = stringResource(R.string.root_system_ipv6_summary_on)
     val ipv6NoRootText = stringResource(R.string.root_system_ipv6_no_root)
     val ipv6NoApnText = stringResource(R.string.root_system_ipv6_apn_none)
     val ipv6ApplyFailedText = stringResource(R.string.root_system_ipv6_apply_failed)
-    // 打开设置页时读取一次首选 APN（优先读本地缓存，后台刷新）。离开页面不再查询。
+    // 打开设置页时先读本地缓存秒显，再查实时首选 APN 更新。离开页面不再查询。
     LaunchedEffect(hasRoot) {
         if (!hasRoot) return@LaunchedEffect
-        apnRows = withContext(Dispatchers.IO) { SystemIpv6.readPreferApn(context) }
+        withContext(Dispatchers.IO) { SystemIpv6.readCachedPreferApn(context) }?.let { apnRows = it }
+        val live = withContext(Dispatchers.IO) { SystemIpv6.readPreferApn(context) }
+        if (live.isNotEmpty() || apnRows == null) apnRows = live
     }
     val preferredApn = apnRows?.firstOrNull { !it.isIms }
     val apnLine: String? = when {
@@ -384,16 +386,22 @@ fun RootSettingsScreen(
                             onCheckedChange = { value ->
                                 val prevValue = systemIpv6
                                 val prevApn = apnRows
-                                // 立即乐观更新开关与 APN 显示（0 延迟反馈），后台毫秒级写 sysctl/config，失败则回滚
+                                // 纯内存乐观更新开关与 APN 显示（主线程 0 磁盘 IO），后台毫秒级写 sysctl/config
                                 systemIpv6 = value
-                                apnRows = SystemIpv6.predictApnAfterToggle(context, value, prevApn)
+                                prevApn?.let { apnRows = SystemIpv6.predictApnInMemory(value, it) }
                                 systemScope.launch {
                                     val ok = withContext(Dispatchers.IO) { SystemIpv6.apply(context, value) }
                                     if (ok) {
                                         storage.putString(StorageKeys.ROOT_SYSTEM_IPV6, value.toString())
-                                        SystemIpv6.readCachedPreferApn(context)?.let { apnRows = it }
+                                        withContext(Dispatchers.IO) { SystemIpv6.readCachedPreferApn(context) }?.let {
+                                            apnRows = it
+                                        }
                                         // 配置已改写：代理在运行中则自动重启以生效（未运行时 restartWhenReady 不做任何事）
                                         activeProfileId?.let { serviceController.restartWhenReady(it) }
+                                        // 后台 APN 改写完成后再拉取一次真实校验值刷新展示
+                                        kotlinx.coroutines.delay(1800)
+                                        val live = withContext(Dispatchers.IO) { SystemIpv6.readPreferApn(context) }
+                                        if (live.isNotEmpty()) apnRows = live
                                     } else {
                                         systemIpv6 = prevValue
                                         apnRows = prevApn

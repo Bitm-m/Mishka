@@ -42,11 +42,17 @@ object SystemIpv6 {
     fun stateDir(context: Context): File =
         File(context.filesDir, STATE_DIR_NAME).apply { mkdirs() }
 
-    /** 把 res/raw 里的脚本复制到私有目录（每次覆盖，保证与应用版本一致）。 */
+    /** 把 res/raw 里的脚本原子替换到私有目录（避免直接截断正在被后台 sh 读取的脚本文件）。 */
     private fun ensureScript(context: Context): File {
-        val script = File(stateDir(context), SCRIPT_NAME)
+        val dir = stateDir(context)
+        val script = File(dir, SCRIPT_NAME)
+        val tmp = File(dir, "$SCRIPT_NAME.tmp")
         context.resources.openRawResource(R.raw.system_ipv6).use { input ->
-            script.outputStream().use { input.copyTo(it) }
+            tmp.outputStream().use { input.copyTo(it) }
+        }
+        if (!tmp.renameTo(script)) {
+            tmp.copyTo(script, overwrite = true)
+            tmp.delete()
         }
         return script
     }
@@ -69,7 +75,7 @@ object SystemIpv6 {
         val q = RootHelper.escapeShellSingleQuoted(script.absolutePath)
         val d = RootHelper.escapeShellSingleQuoted(dir.absolutePath)
         val log = RootHelper.escapeShellSingleQuoted(File(dir, "log").absolutePath)
-        // once 内先毫秒级同步写完 sysctl 与乐观缓存，APN/ndc 耗时操作已在 once 内脱钩后台执行；
+        // once 内先毫秒级同步写完 sysctl 与乐观缓存，APN/ndc 耗时操作在 once 内后台执行；
         // 关态再拉起后台常驻循环（脚本自己写 pid 文件，被新的循环替换时退出）。
         val cmd = if (enable) {
             "sh $q once 1 $d >> $log 2>&1 </dev/null\n"
@@ -160,22 +166,29 @@ object SystemIpv6 {
     }
 
     /** 协议值的可读文案（IP = 仅 IPv4 等）。未知值原样返回。 */
-    fun protocolLabel(value: String): String = when (value.uppercase()) {
+    fun protocolLabel(value: String): String = when (value.trim().trimEnd(',').uppercase()) {
         "IP" -> "IPv4"
         "IPV6" -> "IPv6"
         "IPV4V6" -> "IPv4/IPv6"
         "PPP" -> "PPP"
-        else -> value.ifBlank { "-" }
+        else -> value.trim().trimEnd(',').ifBlank { "-" }
     }
 
     private fun parseApnLines(raw: String): List<ApnRow> =
         raw.lineSequence().mapNotNull { line ->
             val parts = line.trim().split('|')
-            if (parts.size < 5 || parts[0].isBlank()) null
-            else ApnRow(parts[0], parts[1], parts[2], parts[3], parts[4])
+            if (parts.size < 5) null
+            else {
+                val id = parts[0].trim().trimEnd(',')
+                val apn = parts[1].trim().trimEnd(',')
+                val proto = parts[2].trim().trimEnd(',')
+                val roam = parts[3].trim().trimEnd(',')
+                val type = parts[4].trim().trimEnd(',')
+                if (id.isBlank()) null else ApnRow(id, apn, proto, roam, type)
+            }
         }.toList()
 
-    /** 直接读取本地缓存的首选 APN（无需启动 su / app_process，毫秒级返回）。 */
+    /** 读取本地缓存的首选 APN（仅在 IO 线程调用）。 */
     fun readCachedPreferApn(context: Context): List<ApnRow>? {
         val cacheFile = File(stateDir(context), "apn.current")
         if (!cacheFile.isFile) return null
@@ -184,46 +197,18 @@ object SystemIpv6 {
             ?.takeIf { it.isNotEmpty() }
     }
 
-    /** 开关切换瞬间根据已保存的 apn.state 或目标状态立即推算 APN 协议显示，避免 UI 等待 content 查询。 */
-    fun predictApnAfterToggle(context: Context, enable: Boolean, current: List<ApnRow>?): List<ApnRow>? {
-        val base = current?.takeIf { it.isNotEmpty() } ?: readCachedPreferApn(context) ?: return null
-        if (!enable) {
-            return base.map { row ->
-                if (row.isIms) row else row.copy(protocol = "IP", roaming = "IP")
-            }
-        }
-        val saved = runCatching {
-            val stateFile = File(stateDir(context), "apn.state")
-            if (!stateFile.isFile) emptyMap()
-            else stateFile.readLines(Charsets.UTF_8).mapNotNull { line ->
-                val p = line.trim().split('|')
-                if (p.size >= 4) p[0] to (p[2].ifBlank { "IPV4V6" } to p[3].ifBlank { "IP" }) else null
-            }.toMap()
-        }.getOrDefault(emptyMap())
-        return base.map { row ->
+    /** 纯内存推算切换开关后的 APN 显示（不做磁盘 IO，安全在主线程调用）。 */
+    fun predictApnInMemory(enable: Boolean, current: List<ApnRow>): List<ApnRow> =
+        current.map { row ->
             if (row.isIms) row
-            else {
-                val orig = saved[row.id]
-                if (orig != null) row.copy(protocol = orig.first, roaming = orig.second)
-                else if (row.protocol.equals("IP", ignoreCase = true)) row.copy(protocol = "IPV4V6")
-                else row
-            }
+            else if (!enable) row.copy(protocol = "IP", roaming = "IP")
+            else row.copy(
+                protocol = if (row.protocol.equals("IP", ignoreCase = true)) "IPV4V6" else row.protocol,
+            )
         }
-    }
 
-    /** 读取当前首选上网 APN（优先读本地缓存并后台刷新；首次无缓存时通过 root 查询）。 */
+    /** 读取当前首选上网 APN（root 查询）。失败或无 root 返回空列表。 */
     fun readPreferApn(context: Context): List<ApnRow> {
-        readCachedPreferApn(context)?.let { cached ->
-            Thread({ runCatching { queryPreferApnViaRoot(context) } }, "system-ipv6-apn").apply {
-                isDaemon = true
-                start()
-            }
-            return cached
-        }
-        return queryPreferApnViaRoot(context)
-    }
-
-    private fun queryPreferApnViaRoot(context: Context): List<ApnRow> {
         val script = ensureScript(context)
         val q = RootHelper.escapeShellSingleQuoted(script.absolutePath)
         val d = RootHelper.escapeShellSingleQuoted(stateDir(context).absolutePath)

@@ -940,7 +940,8 @@ private fun ProxyNodeCard(
                         )
                         Spacer(Modifier.width(4.dp))
                     }
-                    // 节点名不截断：超出可用宽度时走跑马灯滚动，短名保持原宽（fill = false）
+                    // 节点名超出可用宽度时走跑马灯滚动（短名不挂动画，避免大量卡片同时开启无限动画拖慢滚动）
+                    var textOverflows by remember(name) { mutableStateOf(false) }
                     Text(
                         text = name,
                         fontSize = 13.sp,
@@ -948,9 +949,24 @@ private fun ProxyNodeCard(
                         color = MiuixTheme.colorScheme.onSurface,
                         maxLines = 1,
                         softWrap = false,
+                        overflow = if (isSelected || textOverflows) TextOverflow.Clip else TextOverflow.Ellipsis,
+                        onTextLayout = { result ->
+                            if (result.hasVisualOverflow && !textOverflows) {
+                                textOverflows = true
+                            }
+                        },
                         modifier = Modifier
                             .weight(1f, fill = false)
-                            .basicMarquee(iterations = Int.MAX_VALUE),
+                            .then(
+                                if (isSelected || textOverflows) {
+                                    Modifier.basicMarquee(
+                                        iterations = Int.MAX_VALUE,
+                                        initialDelayMillis = 1500,
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            ),
                     )
                 }
                 Spacer(Modifier.width(6.dp))
