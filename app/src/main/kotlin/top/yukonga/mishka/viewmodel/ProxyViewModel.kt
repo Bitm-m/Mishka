@@ -55,6 +55,7 @@ data class ProxyGroupUi(
     val all: ImmutableList<String> = persistentListOf(),
     val delays: ImmutableMap<String, Int> = persistentMapOf(),
     val nodeTypes: ImmutableMap<String, String> = persistentMapOf(),
+    val nodeProviders: ImmutableMap<String, String> = persistentMapOf(),
     val icon: String = "",
     val fixed: String = "",
     val testUrl: String = "",
@@ -81,6 +82,52 @@ data class ProxyUiState(
     val mode: String = "",
 )
 
+/**
+ * 代理页实际展示的组。ViewModel 的 groups 保持完整（供恢复选择、测速与切换逻辑使用），
+ * 这里只决定卡片可见性：
+ * - 规则模式隐藏 GLOBAL 卡片；
+ * - 全局模式对齐 zashboard：只展示 GLOBAL，以及沿各组 now 逐级选中的组，直到选中普通节点为止；
+ * - 其它模式（直连或模式未知）保持完整列表。
+ */
+fun visibleProxyGroups(groups: List<ProxyGroupUi>, mode: String): List<ProxyGroupUi> {
+    if (groups.isEmpty()) return groups
+    if (mode == ProxyViewModel.MODE_RULE) {
+        return groups.filterNot { it.name == ProxyViewModel.GLOBAL_GROUP }
+    }
+    if (mode != ProxyViewModel.MODE_GLOBAL) return groups
+
+    val global = groups.firstOrNull { it.name == ProxyViewModel.GLOBAL_GROUP } ?: return groups
+    val groupByName = groups.associateBy { it.name }
+    val visible = mutableListOf(global)
+    val seen = mutableSetOf(global.name)
+    var current: ProxyGroupUi = global
+    while (true) {
+        val next = groupByName[current.now] ?: break
+        if (!seen.add(next.name)) break
+        visible += next
+        current = next
+    }
+    return visible
+}
+
+/**
+ * 沿代理组的 `now` 逐级向下，直到普通节点为止的最终出站名（对齐 zashboard 的
+ * `getNowProxyNodeName`）。`now` 本身就是普通节点时原样返回；链路缺失或成环时
+ * 返回当前已解析到的名字，避免 UI 陷入死循环。
+ */
+fun finalOutboundName(groups: List<ProxyGroupUi>, group: ProxyGroupUi): String {
+    if (group.now.isEmpty()) return ""
+    val groupByName = groups.associateBy { it.name }
+    val seen = mutableSetOf(group.name)
+    var currentName = group.now
+    while (true) {
+        val nextGroup = groupByName[currentName] ?: return currentName
+        if (!seen.add(nextGroup.name)) return currentName
+        if (nextGroup.now.isEmpty() || nextGroup.now == nextGroup.name) return nextGroup.name
+        currentName = nextGroup.now
+    }
+}
+
 class ProxyViewModel(
     private val selectionDao: SelectionDao? = null,
     private val getActiveUuid: () -> String? = { null },
@@ -98,6 +145,24 @@ class ProxyViewModel(
     // 节点每行 1 个铺满宽度，关闭时每行 2 个
     private val _singleColumn = MutableStateFlow(loadInitialSingleColumn())
     val singleColumn: StateFlow<Boolean> = _singleColumn.asStateFlow()
+
+    // 代理组双列布局：开启后组卡片两列排列，点击组卡片以弹窗展开节点
+    private val _twoColumnGroups = MutableStateFlow(
+        storage?.getString(StorageKeys.PROXY_GROUP_TWO_COLUMN_LAYOUT, "false") == "true"
+    )
+    val twoColumnGroups: StateFlow<Boolean> = _twoColumnGroups.asStateFlow()
+
+    // 展开节点按提供商分区显示（对齐 zashboard 的 groupProxiesByProvider）
+    private val _groupByProvider = MutableStateFlow(
+        storage?.getString(StorageKeys.PROXY_GROUP_BY_PROVIDER, "false") == "true"
+    )
+    val groupByProvider: StateFlow<Boolean> = _groupByProvider.asStateFlow()
+
+    // 组头展示 now 链路最终出站（对齐 zashboard 的 displayFinalOutbound）
+    private val _showFinalOutbound = MutableStateFlow(
+        storage?.getString(StorageKeys.PROXY_SHOW_FINAL_OUTBOUND, "false") == "true"
+    )
+    val showFinalOutbound: StateFlow<Boolean> = _showFinalOutbound.asStateFlow()
 
     private val _showGroupIcons = MutableStateFlow(
         storage?.getString(StorageKeys.PROXY_GROUP_SHOW_ICONS, "true") != "false"
@@ -146,6 +211,21 @@ class ProxyViewModel(
     fun updateShowGroupIcons(enabled: Boolean) {
         _showGroupIcons.value = enabled
         storage?.putString(StorageKeys.PROXY_GROUP_SHOW_ICONS, enabled.toString())
+    }
+
+    fun updateTwoColumnGroups(enabled: Boolean) {
+        _twoColumnGroups.value = enabled
+        storage?.putString(StorageKeys.PROXY_GROUP_TWO_COLUMN_LAYOUT, enabled.toString())
+    }
+
+    fun updateGroupByProvider(enabled: Boolean) {
+        _groupByProvider.value = enabled
+        storage?.putString(StorageKeys.PROXY_GROUP_BY_PROVIDER, enabled.toString())
+    }
+
+    fun updateShowFinalOutbound(enabled: Boolean) {
+        _showFinalOutbound.value = enabled
+        storage?.putString(StorageKeys.PROXY_SHOW_FINAL_OUTBOUND, enabled.toString())
     }
 
     fun updateHideUnavailable(enabled: Boolean) {
@@ -233,6 +313,7 @@ class ProxyViewModel(
                     .map { node ->
                         val delays = mutableMapOf<String, Int>()
                         val nodeTypes = mutableMapOf<String, String>()
+                        val nodeProviders = mutableMapOf<String, String>()
                         node.all.forEach { proxyName ->
                             val proxy = allProxies[proxyName]
                             val resolved = resolveDelay(proxyName, allProxies)
@@ -240,6 +321,11 @@ class ProxyViewModel(
                             if (proxy != null && proxy.type.isNotEmpty()) {
                                 nodeTypes[proxyName] = proxy.type
                             }
+                            // mihomo 的 default provider 只是本地 proxies: 的运行时聚合，
+                            // 不是订阅提供商，分组时按无提供商处理（与 zashboard 一致）
+                            providerOf[proxyName]
+                                ?.takeUnless { it.equals("default", ignoreCase = true) }
+                                ?.let { nodeProviders[proxyName] = it }
                         }
                         ProxyGroupUi(
                             name = node.name,
@@ -248,6 +334,7 @@ class ProxyViewModel(
                             all = node.all.toPersistentList(),
                             delays = delays.toPersistentMap(),
                             nodeTypes = nodeTypes.toPersistentMap(),
+                            nodeProviders = nodeProviders.toPersistentMap(),
                             icon = node.icon,
                             fixed = node.fixed,
                             testUrl = node.testUrl,
@@ -492,6 +579,7 @@ class ProxyViewModel(
 
     companion object {
         const val GLOBAL_GROUP = "GLOBAL"
+        const val MODE_RULE = "rule"
         const val MODE_GLOBAL = "global"
         const val MODE_DIRECT = "direct"
         private const val TAG = "ProxyViewModel"

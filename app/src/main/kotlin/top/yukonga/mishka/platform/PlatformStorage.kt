@@ -94,6 +94,9 @@ object StorageKeys {
 
     // 代理页设置
     const val PROXY_NODE_SORT_OPTION = "proxy_node_sort_option"
+    const val PROXY_GROUP_TWO_COLUMN_LAYOUT = "proxy_group_two_column_layout"
+    const val PROXY_GROUP_BY_PROVIDER = "proxy_group_by_provider"
+    const val PROXY_SHOW_FINAL_OUTBOUND = "proxy_show_final_outbound"
     const val PROXY_GROUP_SHOW_ICONS = "proxy_group_show_icons"
     const val PROXY_HIDE_UNAVAILABLE = "proxy_hide_unavailable"
     const val PROXY_CLOSE_CONNECTIONS_ON_SWITCH = "proxy_close_connections_on_switch"

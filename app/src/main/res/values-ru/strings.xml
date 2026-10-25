@@ -202,10 +202,14 @@
     <string name="proxy_mode_global_hint">Активен глобальный режим (Global): весь трафик направляется через группу GLOBAL. Выбор в остальных группах вступит в силу после переключения в режим правил (Rule).</string>
     <string name="proxy_refresh_icon">Обновить значки</string>
     <string name="proxy_show_icons">Показывать значки</string>
-    <string name="proxy_hide_unavailable">Скрывать недоступные</string>
+    <string name="proxy_hide_unavailable">Скрывать недоступные узлы</string>
     <string name="proxy_close_connections_on_switch">Закрывать соединения при смене узла</string>
     <string name="proxy_single_column">В один столбец</string>
+    <string name="proxy_two_column_layout">Группы прокси в две колонки</string>
     <string name="proxy_show_group_icons">Показывать значки</string>
+    <string name="proxy_group_by_provider">Группировать прокси по провайдеру</string>
+    <string name="proxy_show_final_outbound">Показать конечный исходящий узел</string>
+    <string name="proxy_no_nodes">Нет доступных узлов</string>
     <string name="proxy_timeout">Тайм-аут</string>
     <string name="proxy_sort_title">Сортировка</string>
     <string name="proxy_sort_default">По умолчанию</string>
