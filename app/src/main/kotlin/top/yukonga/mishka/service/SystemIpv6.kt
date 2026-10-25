@@ -16,7 +16,7 @@ import java.io.File
  *
  * - 关（默认）：非蜂窝网卡（wlan 等；lo / 蜂窝 / 热点下游除外）写 disable_ipv6=1，并关闭 RA / autoconf；
  *   上网 APN（preferapn，跳过 IMS 承载）的 protocol / roaming_protocol 改为 IP，原值记入状态文件；
- * - 开：disable_ipv6 归 0、恢复 RA / autoconf，按状态文件还原 APN 协议；
+ * - 开：disable_ipv6 归 0、恢复 RA / autoconf，按状态文件还原 APN 协议（保存的漫游若仍是 IPv4-only 则提升为 IPV4V6）；
  *   开关同时联动活动订阅 config.yaml 里的 IPv6 开关（顶层 ipv6、dns.ipv6、eBPF 监听器的 local / shared.ipv6），
  *   需重启代理生效；加密订阅无法改写，跳过；
  * - 关态下 root 常驻对账循环每 5 秒检查一次（飞行模式 / 切网后 netd 会把值放回去），漂移追打有 60 秒冷却；
@@ -203,7 +203,8 @@ object SystemIpv6 {
             if (row.isIms) row
             else if (!enable) row.copy(protocol = "IP", roaming = "IP")
             else row.copy(
-                protocol = if (row.protocol.equals("IP", ignoreCase = true)) "IPV4V6" else row.protocol,
+                protocol = if (row.protocol.isBlank() || row.protocol.equals("IP", ignoreCase = true)) "IPV4V6" else row.protocol,
+                roaming = if (row.roaming.isBlank() || row.roaming.equals("IP", ignoreCase = true)) "IPV4V6" else row.roaming,
             )
         }
 
