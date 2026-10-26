@@ -294,3 +294,23 @@ Java_top_yukonga_mishka_service_ProcessHelper_nativeStop(
     if (result != STOP_PENDING) return result;
     return wait_for_child_exit((pid_t) pid, force_ms);
 }
+
+/**
+ * 清除 fd 的 FD_CLOEXEC，使其能被 fork+exec 出的子进程（mihomo）继承。
+ * 供 API 26-29 使用（android.system.Os.fcntlInt 自 API 30 才存在）。
+ * 成功返回 true。
+ */
+JNIEXPORT jboolean JNICALL
+Java_top_yukonga_mishka_service_ProcessHelper_nativeClearCloexec(
+        JNIEnv *env, jclass clazz, jint fd) {
+    int flags = fcntl(fd, F_GETFD);
+    if (flags < 0) {
+        LOGE("F_GETFD failed fd=%d errno=%d", fd, errno);
+        return JNI_FALSE;
+    }
+    if (fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC) < 0) {
+        LOGE("F_SETFD failed fd=%d errno=%d", fd, errno);
+        return JNI_FALSE;
+    }
+    return JNI_TRUE;
+}

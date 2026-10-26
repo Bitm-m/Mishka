@@ -43,4 +43,7 @@ object ProcessHelper {
      * 超时或错误时必须保留 PID 与资源，不能将仍可能存活的子进程当作停止成功。
      */
     external fun nativeStop(pid: Int, graceMs: Int, forceMs: Int): Int
+
+    /** 清除 fd 的 FD_CLOEXEC（API 26-29 替代 Os.fcntlInt）。成功返回 true */
+    external fun nativeClearCloexec(fd: Int): Boolean
 }

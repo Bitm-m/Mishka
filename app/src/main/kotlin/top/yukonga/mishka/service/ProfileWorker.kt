@@ -4,6 +4,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -50,11 +51,17 @@ class ProfileWorker : Service() {
     override fun onCreate() {
         super.onCreate()
         try {
-            startForeground(
-                NotificationHelper.NOTIFICATION_ID_PROFILE_WORKER,
-                NotificationHelper.buildProfileWorkerNotification(this),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-            )
+            val notification = NotificationHelper.buildProfileWorkerNotification(this)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NotificationHelper.NOTIFICATION_ID_PROFILE_WORKER,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                )
+            } else {
+                // 三参数 startForeground 自 API 29 起才存在，API 26-28 使用两参数版本
+                startForeground(NotificationHelper.NOTIFICATION_ID_PROFILE_WORKER, notification)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "startForeground failed", e)
             foregroundFailed = true

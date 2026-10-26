@@ -63,10 +63,23 @@ class WifiPolicyMonitorService : Service() {
         }
     }
 
+    private inner class LegacyWifiNetworkCallback : ConnectivityManager.NetworkCallback() {
+
+        override fun onAvailable(network: Network) = scheduleEvaluate()
+
+        override fun onLost(network: Network) = scheduleEvaluate()
+    }
+
     // 同步 getNetworkCapabilities 返回的 SSID 一律被系统打码，
     // 只有带 FLAG_INCLUDE_LOCATION_INFO 注册的 callback 能拿到真实值
     private val networkCallback: ConnectivityManager.NetworkCallback =
-        WifiNetworkCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            WifiNetworkCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO)
+        } else {
+            // NetworkCallback(flags) 与 transportInfo 均自 API 31 起才存在；低版本退化为无参回调，
+            // SSID 由 AndroidWifiPolicy.currentSsid 的 WifiManager 回退提供
+            LegacyWifiNetworkCallback()
+        }
 
     override fun onBind(intent: Intent?): IBinder? = null
 

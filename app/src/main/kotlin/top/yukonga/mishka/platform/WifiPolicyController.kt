@@ -92,7 +92,10 @@ object AndroidWifiPolicy {
             return null
         }
         callbackSsid?.let { return it }
-        normalizeSsid((capabilities.transportInfo as? WifiInfo)?.ssid)?.let { return it }
+        // transportInfo 自 API 31 起才存在；低版本直接走下面的 WifiManager 回退
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            normalizeSsid((capabilities.transportInfo as? WifiInfo)?.ssid)?.let { return it }
+        }
         @Suppress("DEPRECATION")
         val fallback = (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)
             ?.connectionInfo

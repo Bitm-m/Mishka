@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import top.yukonga.mishka.MainActivity
 import top.yukonga.mishka.R
 import top.yukonga.mishka.service.NotificationHelper.PROFILE_PROGRESS_ID_BASE
@@ -113,7 +114,7 @@ object NotificationHelper {
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            .applyForegroundImmediate()
             .build()
     }
 
@@ -158,7 +159,7 @@ object NotificationHelper {
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            .applyForegroundImmediate()
             .build()
     }
 
@@ -179,7 +180,7 @@ object NotificationHelper {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            .applyForegroundImmediate()
             .build()
     }
 
@@ -214,7 +215,7 @@ object NotificationHelper {
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            .applyForegroundImmediate()
             .build()
     }
 
@@ -279,3 +280,11 @@ object NotificationHelper {
         return id
     }
 }
+
+/** API 31+ 才有 setForegroundServiceBehavior；更低版本保持原样（FGS 本就立即显示） */
+private fun Notification.Builder.applyForegroundImmediate(): Notification.Builder =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+    } else {
+        this
+    }
