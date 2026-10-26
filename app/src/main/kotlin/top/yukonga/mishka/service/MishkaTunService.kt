@@ -3,6 +3,7 @@ package top.yukonga.mishka.service
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.VpnService
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.system.Os
 import android.system.OsConstants
@@ -360,7 +361,8 @@ class MishkaTunService : VpnService() {
         addAddress(RuntimeOverrideBuilder.VPN_GATEWAY, RuntimeOverrideBuilder.VPN_PREFIX)
         setMtu(RuntimeOverrideBuilder.VPN_TUN_MTU)
         setSession("Mishka")
-        setBlocking(false)
+        // setBlocking 是 API 29 API；低版本的 TUN fd 默认即非阻塞，等价行为。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setBlocking(false)
         val bypassPrivate = storage.getString(StorageKeys.VPN_BYPASS_PRIVATE_NETWORK, "true") == "true"
         if (bypassPrivate) {
             resources.getStringArray(R.array.bypass_private_route).forEach { cidr ->
@@ -416,10 +418,13 @@ class MishkaTunService : VpnService() {
 
             else -> addDisallowedApplication(packageName)
         }
-        setMetered(false)
+        // setMetered / setHttpProxy 都是 API 29 API；低版本跳过（VPN 按计费网络对待、不设 VPN 级 HTTP 代理）。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setMetered(false)
         proxyAddress?.let { (address, port) ->
-            val exclusions = HTTP_PROXY_BLACK_LIST + if (bypassPrivate) HTTP_PROXY_LOCAL_LIST else emptyList()
-            setHttpProxy(android.net.ProxyInfo.buildDirectProxy(address, port, exclusions))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val exclusions = HTTP_PROXY_BLACK_LIST + if (bypassPrivate) HTTP_PROXY_LOCAL_LIST else emptyList()
+                setHttpProxy(android.net.ProxyInfo.buildDirectProxy(address, port, exclusions))
+            }
         }
     }.establish()?.detachFd()
 

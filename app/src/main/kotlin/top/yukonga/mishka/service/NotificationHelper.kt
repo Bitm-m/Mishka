@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import top.yukonga.mishka.MainActivity
 import top.yukonga.mishka.R
 import top.yukonga.mishka.service.NotificationHelper.PROFILE_PROGRESS_ID_BASE
@@ -50,6 +51,8 @@ object NotificationHelper {
         RESULT_ID_BASE + (nextResultId.getAndIncrement() % RESULT_ID_RANGE)
 
     fun createChannels(context: Context) {
+        // 通知渠道是 API 26 引入的；Android 7.x 没有渠道概念，直接跳过，通知靠 Builder 默认重要性。
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannels(
             listOf(
@@ -95,6 +98,23 @@ object NotificationHelper {
         )
     }
 
+    /** API 26 以下没有通知渠道，用无渠道构造函数；26+ 把渠道 id 传给构造函数（系统要求）。 */
+    private fun notificationBuilder(context: Context, channelId: String): Notification.Builder =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(context, channelId)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(context)
+        }
+
+    /** setForegroundServiceBehavior 是 API 31 API；低版本忽略（行为等同系统默认）。 */
+    private fun Notification.Builder.withForegroundBehavior(): Notification.Builder {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        }
+        return this
+    }
+
     // === VPN 通知 ===
 
     fun buildNotification(context: Context, title: String, content: String): Notification {
@@ -106,14 +126,14 @@ object NotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        return Notification.Builder(context, CHANNEL_VPN)
+        return notificationBuilder(context, CHANNEL_VPN)
             .setContentTitle(title)
             .setContentText(content)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            .withForegroundBehavior()
             .build()
     }
 
@@ -149,7 +169,7 @@ object NotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        return Notification.Builder(context, CHANNEL_VPN)
+        return notificationBuilder(context, CHANNEL_VPN)
             .setContentTitle("$profileName • $uploadTotal↑ $downloadTotal↓")
             .setContentText("$uploadSpeed↑ $downloadSpeed↓")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
@@ -158,7 +178,7 @@ object NotificationHelper {
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            .withForegroundBehavior()
             .build()
     }
 
@@ -171,7 +191,7 @@ object NotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        return Notification.Builder(context, CHANNEL_WIFI_POLICY_SERVICE)
+        return notificationBuilder(context, CHANNEL_WIFI_POLICY_SERVICE)
             .setContentTitle(context.getString(R.string.notification_wifi_policy_title))
             .setContentText(context.getString(R.string.notification_wifi_policy_service_content))
             .setSmallIcon(R.drawable.ic_launcher_foreground)
@@ -179,7 +199,7 @@ object NotificationHelper {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            .withForegroundBehavior()
             .build()
     }
 
@@ -192,7 +212,7 @@ object NotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        val notification = Notification.Builder(context, CHANNEL_WIFI_POLICY_EVENT)
+        val notification = notificationBuilder(context, CHANNEL_WIFI_POLICY_EVENT)
             .setContentTitle(context.getString(R.string.notification_wifi_policy_title))
             .setContentText(context.getString(contentResId))
             .setSmallIcon(R.drawable.ic_launcher_foreground)
@@ -208,18 +228,18 @@ object NotificationHelper {
     // === 配置更新进度通知 ===
 
     fun buildProfileWorkerNotification(context: Context): Notification {
-        return Notification.Builder(context, CHANNEL_PROFILE_STATUS)
+        return notificationBuilder(context, CHANNEL_PROFILE_STATUS)
             .setContentTitle(context.getString(R.string.notification_profile_update))
             .setContentText(context.getString(R.string.notification_profile_running))
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            .withForegroundBehavior()
             .build()
     }
 
     fun buildProfileUpdatingNotification(context: Context, name: String): Notification {
-        return Notification.Builder(context, CHANNEL_PROFILE_STATUS)
+        return notificationBuilder(context, CHANNEL_PROFILE_STATUS)
             .setContentTitle(context.getString(R.string.notification_profile_updating))
             .setContentText(name)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
@@ -241,7 +261,7 @@ object NotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        val notification = Notification.Builder(context, CHANNEL_PROFILE_RESULT)
+        val notification = notificationBuilder(context, CHANNEL_PROFILE_RESULT)
             .setContentTitle(context.getString(R.string.notification_update_success))
             .setContentText(context.getString(R.string.notification_update_success_content, name))
             .setSmallIcon(R.drawable.ic_launcher_foreground)
@@ -265,7 +285,7 @@ object NotificationHelper {
         )
 
         val text = "$name: $reason"
-        val notification = Notification.Builder(context, CHANNEL_PROFILE_RESULT)
+        val notification = notificationBuilder(context, CHANNEL_PROFILE_RESULT)
             .setContentTitle(context.getString(R.string.notification_update_failed))
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_launcher_foreground)

@@ -14,10 +14,6 @@ import top.yukonga.mishka.data.repository.ProfileProcessor
 import top.yukonga.mishka.data.repository.SubscriptionRepositoryImpl
 import top.yukonga.mishka.service.RootRuntimeCache.sandboxLock
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.LinkOption
-import java.nio.file.Path
-import java.nio.file.attribute.FileTime
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
@@ -154,8 +150,8 @@ internal object RootRuntimeCache {
                 val pairs = cachePairs(runtime, imported, providerCacheRels(runtime))
                 if (pairs.isEmpty()) return@withProfileLock
                 // updatedAt 取订阅根目录的 mtime；缓存文件的创建和 rename 不能冒充订阅更新。
-                val importedPath = imported.toPath()
-                val modifiedTime = Files.getLastModifiedTime(importedPath, LinkOption.NOFOLLOW_LINKS)
+                // API 24-25 没有 java.nio.file，mtime 读写走 Os 的 lstat/utimensat（见 ProfileFileOps 助手）。
+                val modifiedTime = imported.lastModifiedNoFollow()
                 val copied = try {
                     RootHelper.syncRegularFiles(
                         Process.myUid(),
@@ -164,7 +160,7 @@ internal object RootRuntimeCache {
                         pairs,
                     )
                 } finally {
-                    restoreModifiedTime(importedPath, modifiedTime)
+                    restoreModifiedTime(imported, modifiedTime)
                 }
                 if (!copied) {
                     Log.w(TAG, "provider cache sync incomplete for $uuid (${pairs.size} files)")
@@ -175,10 +171,13 @@ internal object RootRuntimeCache {
         }
     }
 
-    private fun restoreModifiedTime(path: Path, modifiedTime: FileTime) {
+    private fun restoreModifiedTime(file: File, modifiedTime: Long?) {
+        if (modifiedTime == null) return
         try {
-            // setLastModifiedTime 会跟随链接，把订阅根的时间写到链接目标上。
-            Files.setAttribute(path, "basic:lastModifiedTime", modifiedTime, LinkOption.NOFOLLOW_LINKS)
+            // 必须不跟随链接：跟随会把订阅根的时间写到符号链接目标上。
+            if (!file.setLastModifiedNoFollow(modifiedTime)) {
+                Log.w(TAG, "restore subscription mtime failed")
+            }
         } catch (e: Exception) {
             Log.w(TAG, "restore subscription mtime failed: ${e.message}")
         }
@@ -224,14 +223,12 @@ internal object RootRuntimeCache {
 
 /** runtime/ 里 mihomo 实际写下的普通文件。不重跑脚本：脚本新增的 path 不在磁盘 config.yaml 里。 */
 internal fun providerCacheRels(runtime: File): List<String> {
-    val root = runtime.toPath()
-    if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) return emptyList()
+    if (!runtime.isDirectoryNoFollow()) return emptyList()
     return runtime.walkTopDown()
-        .onEnter { dir -> !Files.isSymbolicLink(dir.toPath()) }
+        .onEnter { dir -> !dir.isSymbolicLinkCompat() }
         .mapNotNull { file ->
-            val path = file.toPath()
-            if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) return@mapNotNull null
-            val rel = root.relativize(path).toString().replace('\\', '/')
+            if (!file.isRegularFileNoFollow()) return@mapNotNull null
+            val rel = file.relativeTo(runtime).invariantSeparatorsPath
             rel.takeIf { isProviderCacheRel(it) }
         }
         .sorted()
