@@ -20,7 +20,6 @@ import top.yukonga.mishka.platform.BootStartManager
 import top.yukonga.mishka.platform.PlatformStorage
 import top.yukonga.mishka.platform.StorageKeys
 import top.yukonga.mishka.service.ProfileFileOps
-import top.yukonga.mishka.service.isSymbolicLinkCompat
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -361,7 +360,7 @@ class BackupManager(
                 // 订阅目录里的 GeoIP 是共享 geodata/ 的符号链接（symlink 失败时退化为实体拷贝），
                 // 体积大且启动/校验路径的 ensureGeodataLinks 会自动重建，不进备份；
                 // 符号链接一律跳过，防止 readBytes 追随链接把目标内容实体化进 zip
-                if (file.isSymbolicLinkCompat()) return@forEach
+                if (java.nio.file.Files.isSymbolicLink(file.toPath())) return@forEach
                 if (file.name in ProfileFileOps.GEODATA_FILES) return@forEach
                 val relative = file.relativeTo(dir).invariantSeparatorsPath
                 zip.putFile("$entryPrefix/$relative", file)

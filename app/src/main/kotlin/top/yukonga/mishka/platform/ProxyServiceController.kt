@@ -91,7 +91,7 @@ class ProxyServiceController(private val context: Context) {
         val intent = buildServiceIntent(mode, Op.Start).apply {
             putExtra(EXTRA_SUBSCRIPTION_ID, id)
         }
-        context.startForegroundServiceCompat(intent)
+        context.startForegroundService(intent)
     }
 
     private fun restartValidated(id: String) {
@@ -238,7 +238,7 @@ class ProxyServiceController(private val context: Context) {
             putExtra(EXTRA_SUBSCRIPTION_ID, id)
             putExtra(MishkaRootService.EXTRA_ATTACH_ONLY, true)
         }
-        context.startForegroundServiceCompat(intent)
+        context.startForegroundService(intent)
     }
 
     /**

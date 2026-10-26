@@ -1,7 +1,5 @@
 package top.yukonga.mishka.service
 
-import top.yukonga.mishka.platform.startForegroundServiceCompat
-
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -47,7 +45,7 @@ class ProfileReceiver : BroadcastReceiver() {
                 if (uuid != null) data = Uri.parse("uuid://$uuid")
             }
             try {
-                context.startForegroundServiceCompat(intent)
+                context.startForegroundService(intent)
             } catch (e: Exception) {
                 // Android 12+ ForegroundServiceStartNotAllowedException 及各 OEM ROM 后台启动限制；
                 // 吞异常避免 BroadcastReceiver 进程崩溃，同时主动 re-arm 保调度链不断

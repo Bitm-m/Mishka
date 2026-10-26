@@ -7,9 +7,7 @@ object ProjectConfig {
 
     object Android {
         const val TARGET_SDK = 37
-        // 最低支持 Android 7.0（API 24）：代码里用到的高版本 API 必须做版本守卫，
-        // 跨版本 IO 走 android.system.Os，不用 java.nio.file / java.time（脱糖兜底）。
-        const val MIN_SDK = 24
+        const val MIN_SDK = 31
         const val COMPILE_SDK = 37
         const val COMPILE_SDK_MINOR = 2
     }

@@ -4,7 +4,6 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -51,20 +50,11 @@ class ProfileWorker : Service() {
     override fun onCreate() {
         super.onCreate()
         try {
-            // 带 foregroundServiceType 的三参 startForeground 是 API 29+；specialUse 类型 API 34 才有，
-            // 与 WifiPolicyMonitorService 一致：34+ 传类型，低版本退回两参（清单里的类型声明只在新系统生效）。
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(
-                    NotificationHelper.NOTIFICATION_ID_PROFILE_WORKER,
-                    NotificationHelper.buildProfileWorkerNotification(this),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-                )
-            } else {
-                startForeground(
-                    NotificationHelper.NOTIFICATION_ID_PROFILE_WORKER,
-                    NotificationHelper.buildProfileWorkerNotification(this),
-                )
-            }
+            startForeground(
+                NotificationHelper.NOTIFICATION_ID_PROFILE_WORKER,
+                NotificationHelper.buildProfileWorkerNotification(this),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+            )
         } catch (e: Exception) {
             Log.e(TAG, "startForeground failed", e)
             foregroundFailed = true

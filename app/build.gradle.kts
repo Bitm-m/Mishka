@@ -15,7 +15,6 @@ plugins {
 }
 
 dependencies {
-    coreLibraryDesugaring(libs.desugar.jdk.libs)
     baselineProfile(projects.baselineprofile)
     implementation(platform(libs.koin.bom))
     implementation(libs.bundles.koin)
@@ -87,8 +86,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
-        // 核心库脱糖：让 java.time / 流等 Java 8+ API 在 API 24-25 上可用（kotlinx-datetime 依赖它）
-        isCoreLibraryDesugaringEnabled = true
     }
     defaultConfig {
         applicationId = ProjectConfig.PACKAGE_NAME
