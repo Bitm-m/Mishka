@@ -3,6 +3,7 @@ package top.yukonga.mishka.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import top.yukonga.mishka.platform.startForegroundServiceCompat
 import top.yukonga.mishka.platform.PlatformStorage
 import top.yukonga.mishka.platform.StorageKeys
 import top.yukonga.mishka.platform.WifiPolicyIntents
@@ -20,7 +21,7 @@ class WifiPolicyBootReceiver : BroadcastReceiver() {
                 val serviceIntent = Intent(context, WifiPolicyMonitorService::class.java).apply {
                     action = WifiPolicyIntents.ACTION_START
                 }
-                context.startForegroundService(serviceIntent)
+                context.startForegroundServiceCompat(serviceIntent)
             }
         }
     }

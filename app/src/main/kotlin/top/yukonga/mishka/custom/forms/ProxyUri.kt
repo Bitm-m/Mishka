@@ -625,7 +625,9 @@ internal object ProxyUri {
         if (!BASE64_BODY_RE.matches(s) || s.length % 4 == 1) throw ProxyUriError("Base64 编码不正确")
         val padded = s + "=".repeat((4 - s.length % 4) % 4)
         val bytes = try {
-            java.util.Base64.getDecoder().decode(padded)
+            // java.util.Base64 是 API 26 才有的；android.util.Base64 全版本可用，
+            // 输入已过正则且补好 padding，DEFAULT 即标准字母表解码。
+            android.util.Base64.decode(padded, android.util.Base64.DEFAULT)
         } catch (e: Exception) {
             throw ProxyUriError("Base64 编码不正确")
         }
