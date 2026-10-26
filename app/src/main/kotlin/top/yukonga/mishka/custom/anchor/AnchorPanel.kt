@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import top.yukonga.mishka.R
 import top.yukonga.mishka.custom.forms.MiniIconButton
 import top.yukonga.mishka.platform.showToast
+import top.yukonga.mishka.ui.component.SCROLLBAR_GUTTER
 import top.yukonga.mishka.ui.component.verticalScrollbar
 import top.yukonga.mishka.ui.theme.StatusColors
 import top.yukonga.mishka.ui.util.sheetContentSafePadding
@@ -188,7 +189,7 @@ fun MishkaAnchorPanel(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxWidth().verticalScrollbar(listState),
-                        contentPadding = PaddingValues(bottom = 12.dp),
+                        contentPadding = PaddingValues(bottom = 12.dp, end = SCROLLBAR_GUTTER),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         if (graph.isEmpty) {

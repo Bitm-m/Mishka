@@ -1,5 +1,6 @@
 package top.yukonga.mishka.ui.component
 
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -135,7 +136,11 @@ private fun ScanResultDialog(
         onDismissRequest = onDismiss,
     ) {
         val listState = rememberLazyListState()
-        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().verticalScrollbar(listState)) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxWidth().verticalScrollbar(listState),
+            contentPadding = PaddingValues(end = SCROLLBAR_GUTTER),
+        ) {
             items(candidates) { iface ->
                 val checked = selected[iface] == true
                 BasicComponent(

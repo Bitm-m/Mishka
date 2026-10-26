@@ -38,6 +38,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import top.yukonga.mishka.platform.showToast
 import top.yukonga.mishka.custom.runtime.TproxyAppFilter
+import top.yukonga.mishka.ui.component.SCROLLBAR_GUTTER
 import top.yukonga.mishka.ui.component.verticalScrollWithScrollbar
 import top.yukonga.mishka.ui.component.verticalScrollbar
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -104,7 +105,8 @@ internal fun DnsServerListDialog(
                     .heightIn(max = 300.dp)
                     .then(dragSort.containerModifier { scrollState.dispatchRawDelta(it) })
                     .verticalScrollbar(scrollState)
-                    .verticalScroll(scrollState, enabled = dragSort.dragging < 0),
+                    .verticalScroll(scrollState, enabled = dragSort.dragging < 0)
+                    .padding(end = SCROLLBAR_GUTTER),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 // 顺序由 DragSortState.order 定（拖动中实时换位）；行内容与回调按原始下标取
@@ -603,7 +605,8 @@ internal fun FakeIpRulesDialog(
                     .heightIn(max = 300.dp)
                     .then(dragSort.containerModifier { scrollState.dispatchRawDelta(it) })
                     .verticalScrollbar(scrollState)
-                    .verticalScroll(scrollState, enabled = dragSort.dragging < 0),
+                    .verticalScroll(scrollState, enabled = dragSort.dragging < 0)
+                    .padding(end = SCROLLBAR_GUTTER),
             ) {
                 // 顺序由 DragSortState.order 定（拖动中实时换位）；行内容与回调按原始下标取
                 dragSort.order.forEach { index ->
@@ -862,7 +865,7 @@ internal fun AppListFieldDialog(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScrollbar(listState),
-                contentPadding = PaddingValues(vertical = 4.dp),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 4.dp, end = SCROLLBAR_GUTTER),
             ) {
                 item(key = PICKER_HDR_COUNT) { AppPickerSectionTitle(countTitle) }
                 if (selectedRows.isNotEmpty()) {
@@ -942,7 +945,11 @@ internal fun RuleSetPickDialog(
             TextField(query, { query = it }, modifier = Modifier.fillMaxWidth(), label = "搜索规则集", singleLine = true)
             if (candidates.isEmpty()) DialogNote("当前配置没有 rule-providers；你仍可以保留现有值或手动输入名称。")
             if (currentUnknown.isNotEmpty()) DialogNote("未在 rule-providers 中找到的已配置项仍会保留：${currentUnknown.joinToString()}")
-            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScrollbar(listState)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScrollbar(listState),
+                contentPadding = PaddingValues(end = SCROLLBAR_GUTTER),
+            ) {
                 items(currentUnknown, key = { "unknown:$it" }) { name ->
                     AppChoiceRow(name, "当前值 · 未匹配规则集", name in selected) {
                         if (name in selected) selected.remove(name) else selected.add(name)
@@ -1098,7 +1105,8 @@ internal fun MapListFieldDialog(
                     // 边缘自动翻滚走 dispatchRawDelta（程序化滚动），不吃 userScrollEnabled
                     .then(dragSort.containerModifier { listScroll.dispatchRawDelta(it) })
                     .verticalScrollbar(listScroll)
-                    .verticalScroll(listScroll, enabled = dragSort.dragging < 0),
+                    .verticalScroll(listScroll, enabled = dragSort.dragging < 0)
+                    .padding(end = SCROLLBAR_GUTTER),
             ) {
                 // 顺序由 DragSortState.order 定（拖动中实时换位）；行内容与回调按原始下标取
                 dragSort.order.forEach { index ->
@@ -1168,7 +1176,8 @@ private fun MapListEntryDialog(
                         .heightIn(max = 140.dp)
                         .then(dnsValueSort.containerModifier { dnsValueScroll.dispatchRawDelta(it) })
                         .verticalScrollbar(dnsValueScroll)
-                        .verticalScroll(dnsValueScroll, enabled = dnsValueSort.dragging < 0),
+                        .verticalScroll(dnsValueScroll, enabled = dnsValueSort.dragging < 0)
+                        .padding(end = SCROLLBAR_GUTTER),
                 ) {
                     // 顺序由 DragSortState.order 定（拖动中实时换位）；行内容与回调按原始下标取
                     dnsValueSort.order.forEach { index ->

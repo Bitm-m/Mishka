@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import top.yukonga.mishka.platform.showToast
+import top.yukonga.mishka.ui.component.SCROLLBAR_GUTTER
 import top.yukonga.mishka.ui.component.verticalScrollWithScrollbar
 import top.yukonga.mishka.ui.component.verticalScrollbar
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -1299,7 +1300,8 @@ private fun ExprListDialog(items: List<String>, onDismiss: () -> Unit, onCommit:
                     .fillMaxWidth()
                     .heightIn(max = 160.dp)
                     .verticalScrollbar(presetScroll)
-                    .verticalScroll(presetScroll),
+                    .verticalScroll(presetScroll)
+                    .padding(end = SCROLLBAR_GUTTER),
             ) {
                 for ((label, exprs) in EXPR_PRESETS) {
                     BasicComponent(
@@ -1325,7 +1327,8 @@ private fun ExprListDialog(items: List<String>, onDismiss: () -> Unit, onCommit:
                     .fillMaxWidth()
                     .heightIn(max = 220.dp)
                     .verticalScrollbar(exprScroll)
-                    .verticalScroll(exprScroll),
+                    .verticalScroll(exprScroll)
+                    .padding(end = SCROLLBAR_GUTTER),
             ) {
                 if (local.isEmpty()) DialogNote("未设置表达式（点「＋ 添加表达式」可视化新建，或点上方快捷按钮填入）")
                 local.forEachIndexed { i, ex ->
@@ -1773,12 +1776,19 @@ private fun RuleEditDialog(
         summary = spec?.label ?: "未知类型 $type（照样按 类型,匹配值,策略 写）",
         onDismissRequest = onDismiss,
     ) {
+        // 固定高度、取消 / 确定钉在底部：弹窗本体不再上下滑动（正文区 weight 占满剩余高度），
+        // 展开的类型 / 匹配值候选 / 目标策略列表只在正文区剩余空间里各自滚动——
+        // 避免弹窗本体滚动条与窗内几个列表的滚动条都贴在右缘重叠冲突
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 560.dp)
-                .verticalScrollWithScrollbar(),
+                .height(560.dp),
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(
                     text = if (rawMode) "切换为可视化编辑" else "切换为文本编辑",
@@ -1809,7 +1819,7 @@ private fun RuleEditDialog(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 240.dp)
+                            .weight(1f, fill = false)
                             .verticalScrollWithScrollbar(),
                     ) {
                         for (t in RULE_TYPES) {
@@ -1829,7 +1839,7 @@ private fun RuleEditDialog(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 160.dp)
+                                .weight(1f, fill = false)
                                 .verticalScrollWithScrollbar(),
                         ) {
                             for (c in valueCandidates) BasicComponent(title = c.value, summary = c.label, onClick = { value = c.value })
@@ -1846,7 +1856,7 @@ private fun RuleEditDialog(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 220.dp)
+                            .weight(1f, fill = false)
                             .verticalScrollWithScrollbar(),
                     ) {
                         if (policyCandidates.isEmpty()) DialogNote("文档里还没有可选的目标")
@@ -1865,6 +1875,7 @@ private fun RuleEditDialog(
                 }
                 if (keepFlags.isNotEmpty()) DialogNote("原规则带有参数 ${keepFlags.joinToString(",")}，会原样保留在末尾")
                 DialogNote("预览：$preview")
+            }
             }
             DialogButtons(onDismiss = onDismiss, confirmLabel = "确定") {
                 if (rawMode) {

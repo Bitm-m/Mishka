@@ -1,6 +1,7 @@
 package top.yukonga.mishka.ui.component
 
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -64,12 +65,18 @@ fun Modifier.verticalScrollbar(
 /**
  * `Column` 等普通滚动容器的一行写法：内部记住 [ScrollState] 并同时挂上滚动与右侧滚动条。
  * 只适合不需要从外部驱动滚动状态的场景；拖拽排序等要拿状态的容器仍用带 state 的两个版本。
+ *
+ * 滚动内容右侧统一留 [SCROLLBAR_GUTTER] 间隔：滑块贴在容器最右缘，行尾的删除 / 编辑
+ * 按钮让到间隔左侧，不再被滑块压住（需要外部驱动状态的容器同样按这个间隔留白）。
  */
 @Composable
 fun Modifier.verticalScrollWithScrollbar(): Modifier {
     val state = rememberScrollState()
-    return this.verticalScrollbar(state).verticalScroll(state)
+    return this.verticalScrollbar(state).verticalScroll(state).padding(end = SCROLLBAR_GUTTER)
 }
+
+/** 滚动条占用的右侧间隔：带行尾按钮的滚动内容应让出这段宽度，避免与滑块重叠。 */
+val SCROLLBAR_GUTTER = 8.dp
 
 /** [LazyListState] 版：用可见项的平均高度估算总高度，列表项高度不一致时滑块位置是近似值。 */
 @Composable
