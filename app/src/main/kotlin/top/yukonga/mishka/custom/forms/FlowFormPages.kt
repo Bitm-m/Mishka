@@ -1756,7 +1756,6 @@ private fun RuleEditDialog(
     val subRule = spec?.targetKind == "sub-rules"
     val policyCandidates = if (subRule) host.candidates("sub-rules")
     else host.candidates("policies")
-    val valueCandidates = if (spec?.targetKind == "rule-providers") host.candidates("rule-providers") else emptyList()
     val preview = RuleText.format(type, value.trim(), policy.trim(), noResolve && !isMatch, keepFlags)
 
     fun syncVisFromText(): Boolean {
@@ -1809,7 +1808,8 @@ private fun RuleEditDialog(
             } else {
                 BasicComponent(
                     title = "类型",
-                    summary = spec?.let { "${it.value} · ${it.label}" } ?: type,
+                    // 说明与类型名相同时（如 DOMAIN-KEYWORD）只显示一次，不拼成「X · X」
+                    summary = spec?.let { if (it.label == it.value) it.value else "${it.value} · ${it.label}" } ?: type,
                 )
                 Column(
                     modifier = Modifier
@@ -1820,7 +1820,7 @@ private fun RuleEditDialog(
                     for (t in RULE_TYPES) {
                         BasicComponent(
                             title = t.value,
-                            summary = t.label,
+                            summary = t.label.takeIf { it != t.value },
                             endActions = {
                                 if (t.value == type) Text(text = "当前", fontSize = 12.sp, color = MiuixTheme.colorScheme.primary)
                             },
@@ -1840,16 +1840,6 @@ private fun RuleEditDialog(
                     )
                     if (value.isEmpty()) {
                         spec?.placeholder?.let { DialogNote("例：$it") }
-                    }
-                    if (valueCandidates.isNotEmpty()) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f, fill = false)
-                                .verticalScrollWithScrollbar(),
-                        ) {
-                            for (c in valueCandidates) BasicComponent(title = c.value, summary = c.label, onClick = { value = c.value })
-                        }
                     }
                 }
                 BasicComponent(
