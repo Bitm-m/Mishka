@@ -1809,7 +1809,8 @@ private fun RuleEditDialog(
             } else {
                 BasicComponent(
                     title = "类型",
-                    summary = spec?.let { "${it.value} · ${it.label}" } ?: type,
+                    // 说明与类型名相同时（如 DOMAIN-KEYWORD）只显示一次，不拼成「X · X」
+                    summary = spec?.let { if (it.label == it.value) it.value else "${it.value} · ${it.label}" } ?: type,
                 )
                 Column(
                     modifier = Modifier
@@ -1820,7 +1821,7 @@ private fun RuleEditDialog(
                     for (t in RULE_TYPES) {
                         BasicComponent(
                             title = t.value,
-                            summary = t.label,
+                            summary = t.label.takeIf { it != t.value },
                             endActions = {
                                 if (t.value == type) Text(text = "当前", fontSize = 12.sp, color = MiuixTheme.colorScheme.primary)
                             },
@@ -1848,7 +1849,7 @@ private fun RuleEditDialog(
                                 .weight(1f, fill = false)
                                 .verticalScrollWithScrollbar(),
                         ) {
-                            for (c in valueCandidates) BasicComponent(title = c.value, summary = c.label, onClick = { value = c.value })
+                            for (c in valueCandidates) BasicComponent(title = c.value, summary = c.label.takeIf { it != c.value }, onClick = { value = c.value })
                         }
                     }
                 }
