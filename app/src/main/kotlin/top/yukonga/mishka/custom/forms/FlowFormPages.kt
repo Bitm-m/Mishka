@@ -1756,7 +1756,6 @@ private fun RuleEditDialog(
     val subRule = spec?.targetKind == "sub-rules"
     val policyCandidates = if (subRule) host.candidates("sub-rules")
     else host.candidates("policies")
-    val valueCandidates = if (spec?.targetKind == "rule-providers") host.candidates("rule-providers") else emptyList()
     val preview = RuleText.format(type, value.trim(), policy.trim(), noResolve && !isMatch, keepFlags)
 
     fun syncVisFromText(): Boolean {
@@ -1841,16 +1840,6 @@ private fun RuleEditDialog(
                     )
                     if (value.isEmpty()) {
                         spec?.placeholder?.let { DialogNote("例：$it") }
-                    }
-                    if (valueCandidates.isNotEmpty()) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f, fill = false)
-                                .verticalScrollWithScrollbar(),
-                        ) {
-                            for (c in valueCandidates) BasicComponent(title = c.value, summary = c.label.takeIf { it != c.value }, onClick = { value = c.value })
-                        }
                     }
                 }
                 BasicComponent(
