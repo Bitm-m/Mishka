@@ -3,7 +3,6 @@ package top.yukonga.mishka.service
 import android.content.Context
 import android.system.Os
 import android.system.OsConstants
-import android.system.StructTimespec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -12,7 +11,7 @@ import java.io.IOException
 
 /**
  * 低版本兼容的文件元信息读写：java.nio.file 是 API 26 才引入的，API 24-25 上改用
- * android.system.Os（API 21+）的 lstat / utimensat 等价实现，一律「不跟随符号链接」。
+ * android.system.Os（API 21+）的 lstat 等价实现，一律「不跟随符号链接」。
  */
 private fun lstatMode(file: File): Int? = try {
     Os.lstat(file.absolutePath).st_mode
@@ -40,15 +39,12 @@ internal fun File.lastModifiedNoFollow(): Long? = try {
 }
 
 /** 不跟随符号链接地恢复最后修改时间，atime 保持不变。成功返回 true。 */
-internal fun File.setLastModifiedNoFollow(millis: Long): Boolean = try {
-    val times = arrayOf(
-        StructTimespec(0L, OsConstants.UTIME_OMIT.toLong()),
-        StructTimespec(millis / 1_000L, millis % 1_000L * 1_000_000L),
-    )
-    Os.utimensat(null, absolutePath, times, OsConstants.AT_SYMLINK_NOFOLLOW)
-    true
-} catch (_: Exception) {
-    false
+internal fun File.setLastModifiedNoFollow(millis: Long): Boolean {
+    // android.system.Os 没有 utimensat（SDK 里并不存在这个方法），无法按 NOFOLLOW 写时间；
+    // 退化为：路径本身是符号链接时直接跳过——绝不跟随到链接目标上改时间，
+    // 这正是不能无条件用 File.setLastModified 的原因。
+    if (isSymbolicLinkCompat()) return false
+    return setLastModified(millis)
 }
 
 /**

@@ -150,7 +150,7 @@ internal object RootRuntimeCache {
                 val pairs = cachePairs(runtime, imported, providerCacheRels(runtime))
                 if (pairs.isEmpty()) return@withProfileLock
                 // updatedAt 取订阅根目录的 mtime；缓存文件的创建和 rename 不能冒充订阅更新。
-                // API 24-25 没有 java.nio.file，mtime 读写走 Os 的 lstat/utimensat（见 ProfileFileOps 助手）。
+                // API 24-25 没有 java.nio.file，mtime 读写走 Os.lstat + 不跟随链接的恢复（见 ProfileFileOps 助手）。
                 val modifiedTime = imported.lastModifiedNoFollow()
                 val copied = try {
                     RootHelper.syncRegularFiles(
