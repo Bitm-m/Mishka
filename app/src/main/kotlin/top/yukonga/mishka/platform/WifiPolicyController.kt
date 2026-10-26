@@ -35,7 +35,7 @@ class WifiPolicyController constructor(private val context: PlatformContext) {
 
     fun startMonitor() {
         setBootReceiverEnabled(true)
-        context.startForegroundService(buildIntent(WifiPolicyIntents.ACTION_START))
+        context.startForegroundServiceCompat(buildIntent(WifiPolicyIntents.ACTION_START))
     }
 
     fun stopMonitor() {
@@ -44,7 +44,7 @@ class WifiPolicyController constructor(private val context: PlatformContext) {
     }
 
     fun evaluateNow() {
-        context.startForegroundService(buildIntent(WifiPolicyIntents.ACTION_EVALUATE))
+        context.startForegroundServiceCompat(buildIntent(WifiPolicyIntents.ACTION_EVALUATE))
     }
 
     private fun buildIntent(action: String): Intent = Intent().apply {

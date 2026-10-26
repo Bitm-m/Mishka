@@ -1,12 +1,50 @@
 package top.yukonga.mishka.service
 
 import android.content.Context
+import android.system.Os
+import android.system.OsConstants
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.nio.file.Files
+
+/**
+ * 低版本兼容的文件元信息读写：java.nio.file 是 API 26 才引入的，API 24-25 上改用
+ * android.system.Os（API 21+）的 lstat 等价实现，一律「不跟随符号链接」。
+ */
+private fun lstatMode(file: File): Int? = try {
+    Os.lstat(file.absolutePath).st_mode
+} catch (_: Exception) {
+    null
+}
+
+/** 路径本身是否为符号链接（不跟随）。 */
+internal fun File.isSymbolicLinkCompat(): Boolean =
+    lstatMode(this)?.let { it and OsConstants.S_IFMT == OsConstants.S_IFLNK } == true
+
+/** 路径本身是否为目录（符号链接指向目录不算）。 */
+internal fun File.isDirectoryNoFollow(): Boolean =
+    lstatMode(this)?.let { it and OsConstants.S_IFMT == OsConstants.S_IFDIR } == true
+
+/** 路径本身是否为普通文件（符号链接指向普通文件不算）。 */
+internal fun File.isRegularFileNoFollow(): Boolean =
+    lstatMode(this)?.let { it and OsConstants.S_IFMT == OsConstants.S_IFREG } == true
+
+/** 不跟随符号链接的最后修改时间（毫秒），读不到返回 null。 */
+internal fun File.lastModifiedNoFollow(): Long? = try {
+    Os.lstat(absolutePath).st_mtime * 1_000L
+} catch (_: Exception) {
+    null
+}
+
+internal fun File.setLastModifiedNoFollow(millis: Long): Boolean {
+    // android.system.Os 没有 utimensat（SDK 里并不存在这个方法），无法按 NOFOLLOW 写时间；
+    // 退化为：路径本身是符号链接时直接跳过——绝不跟随到链接目标上改时间，
+    // 这正是不能无条件用 File.setLastModified 的原因。
+    if (isSymbolicLinkCompat()) return false
+    return setLastModified(millis)
+}
 
 /**
  * 订阅文件操作。三阶段目录：pending → processing → imported。
@@ -251,9 +289,9 @@ object ProfileFileOps {
 
     private fun preserveCopiedMtimes(source: File, dest: File) {
         source.walkTopDown().forEach { file ->
-            if (Files.isSymbolicLink(file.toPath()) || !file.isFile) return@forEach
+            if (file.isSymbolicLinkCompat() || !file.isFile) return@forEach
             val copied = File(dest, file.relativeTo(source).path)
-            if (Files.isSymbolicLink(copied.toPath()) || !copied.isFile) return@forEach
+            if (copied.isSymbolicLinkCompat() || !copied.isFile) return@forEach
             copied.setLastModified(file.lastModified())
         }
     }
@@ -354,7 +392,8 @@ object ProfileFileOps {
             val target = File(subscriptionDir, fileName)
             if (source.exists() && !target.exists()) {
                 try {
-                    java.nio.file.Files.createSymbolicLink(target.toPath(), source.toPath())
+                    // Os.symlink 是 API 21 API；java.nio.file.Files 要 API 26，低版本不可用。
+                    Os.symlink(source.absolutePath, target.absolutePath)
                 } catch (_: Exception) {
                     try {
                         source.copyTo(target, overwrite = false)
