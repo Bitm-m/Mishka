@@ -295,6 +295,28 @@ class ProxyViewModel(
                 }
                 nodeProviderMap = providerOf
 
+                // 按提供商分组只认订阅提供商（对齐 zashboard：排除 default 与 Compatible，
+                // 其余非订阅来源一律按无提供商处理，避免 PASS 等内置出站被分到代理组名下）
+                val eligibleProviderNames = mutableSetOf<String>()
+                val groupingProviderOf = mutableMapOf<String, String>()
+                providersResult.getOrNull()?.providers?.forEach { (providerName, provider) ->
+                    if (providerName.equals("default", ignoreCase = true) ||
+                        provider.vehicleType.equals("Compatible", ignoreCase = true)
+                    ) {
+                        return@forEach
+                    }
+                    val displayProviderName = provider.name.ifBlank { providerName }
+                    eligibleProviderNames += displayProviderName
+                    provider.proxies.forEach { node ->
+                        groupingProviderOf.putIfAbsent(node.name, displayProviderName)
+                    }
+                }
+                runtimeProxies.forEach { (name, node) ->
+                    if (node.providerName in eligibleProviderNames) {
+                        groupingProviderOf[name] = node.providerName
+                    }
+                }
+
                 val globalGroup = groupsResponse.proxies.firstOrNull { it.name == GLOBAL_GROUP }
                 val orderMap = globalGroup?.all?.withIndex()?.associate { it.value to it.index } ?: emptyMap()
 
@@ -321,11 +343,7 @@ class ProxyViewModel(
                             if (proxy != null && proxy.type.isNotEmpty()) {
                                 nodeTypes[proxyName] = proxy.type
                             }
-                            // mihomo 的 default provider 只是本地 proxies: 的运行时聚合，
-                            // 不是订阅提供商，分组时按无提供商处理（与 zashboard 一致）
-                            providerOf[proxyName]
-                                ?.takeUnless { it.equals("default", ignoreCase = true) }
-                                ?.let { nodeProviders[proxyName] = it }
+                            groupingProviderOf[proxyName]?.let { nodeProviders[proxyName] = it }
                         }
                         ProxyGroupUi(
                             name = node.name,

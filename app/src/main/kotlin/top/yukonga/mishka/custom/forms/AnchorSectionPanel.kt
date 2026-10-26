@@ -69,6 +69,8 @@ internal fun AnchorSectionCard(host: FormHost, topKey: String, base: YPath) {
     val headLine1 = entry?.let { AnchorInheritance.headLine0(it) + 1 } ?: 0
     var pickL1 by remember { mutableStateOf(false) }
     var pickField by remember { mutableStateOf(false) }
+    // 代理集合 / 规则集合详情只需要一级、二级锚点操作；「锚点定义」一览信息量大且不参与编辑，不在这两类页面展示
+    val showAnchorDefinitions = topKey != "proxy-providers" && topKey != "rule-providers"
 
     Column(modifier = Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SectionHeader("YAML 锚点")
@@ -110,42 +112,44 @@ internal fun AnchorSectionCard(host: FormHost, topKey: String, base: YPath) {
             }
         }
         // 锚点定义一览：名字 / 宿主键 / 定义行号 / 形态 / 全文引用次数，本条目正在用的标出来
-        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.defaultColors()) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                BasicComponent(
-                    title = "锚点定义（${defs.size}）",
-                    summary = if (defs.isEmpty()) {
-                        "文档里还没有锚点：先在编辑器里给某个字段写 `&名字`，再回来挂继承 / 引用"
-                    } else {
-                        "标题是锚点名，摘要里「定义于」是承载它的 YAML 键 · 映射才能被 <<: 继承，标量 / 序列只能整体 * 引用"
-                    },
-                )
-                if (defs.isNotEmpty()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 220.dp)
-                            .verticalScroll(rememberScrollState()),
-                    ) {
-                        val entryAnchor = entry?.anchor
-                        defs.forEach { d ->
-                            val inheritedHere = d.name in l1.merges
-                            val fieldUses = states.filter { d.name in it.merges || it.aliasRef == d.name }.map { it.key }
-                            BasicComponent(
-                                title = buildString {
-                                    append("&").append(d.name)
-                                    when {
-                                        d.name == entryAnchor -> append("  ← 本条目定义")
-                                        inheritedHere -> append("  ← 本条目继承中")
-                                        fieldUses.isNotEmpty() -> append("  ← 本条目字段 " + fieldUses.joinToString("/") + " 在用")
-                                    }
-                                },
-                                summary = buildString {
-                                    append("定义于「").append(d.ownerKey ?: "序列项").append("」· 第 ").append(d.line1).append(" 行 · ")
-                                    append(if (d.isMap) "映射（可 <<: 继承）" else "标量 / 序列（只能 * 引用）")
-                                    append(" · 全文引用 ").append(refCounts[d.name] ?: 0).append(" 处")
-                                },
-                            )
+        if (showAnchorDefinitions) {
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.defaultColors()) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    BasicComponent(
+                        title = "锚点定义（${defs.size}）",
+                        summary = if (defs.isEmpty()) {
+                            "文档里还没有锚点：先在编辑器里给某个字段写 `&名字`，再回来挂继承 / 引用"
+                        } else {
+                            "标题是锚点名，摘要里「定义于」是承载它的 YAML 键 · 映射才能被 <<: 继承，标量 / 序列只能整体 * 引用"
+                        },
+                    )
+                    if (defs.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 220.dp)
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            val entryAnchor = entry?.anchor
+                            defs.forEach { d ->
+                                val inheritedHere = d.name in l1.merges
+                                val fieldUses = states.filter { d.name in it.merges || it.aliasRef == d.name }.map { it.key }
+                                BasicComponent(
+                                    title = buildString {
+                                        append("&").append(d.name)
+                                        when {
+                                            d.name == entryAnchor -> append("  ← 本条目定义")
+                                            inheritedHere -> append("  ← 本条目继承中")
+                                            fieldUses.isNotEmpty() -> append("  ← 本条目字段 " + fieldUses.joinToString("/") + " 在用")
+                                        }
+                                    },
+                                    summary = buildString {
+                                        append("定义于「").append(d.ownerKey ?: "序列项").append("」· 第 ").append(d.line1).append(" 行 · ")
+                                        append(if (d.isMap) "映射（可 <<: 继承）" else "标量 / 序列（只能 * 引用）")
+                                        append(" · 全文引用 ").append(refCounts[d.name] ?: 0).append(" 处")
+                                    },
+                                )
+                            }
                         }
                     }
                 }
