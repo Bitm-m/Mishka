@@ -1833,10 +1833,14 @@ private fun RuleEditDialog(
                         value = value,
                         onValueChange = { value = it },
                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                        // 举例只在还没输入时当说明显示，输入后隐藏，避免例子和已填内容混在一起
-                        label = if (value.isEmpty()) spec?.placeholder?.let { "匹配值，例：$it" } ?: "匹配值" else "匹配值",
+                        // 标签只写「匹配值」：空状态时标签也不会被长举例撑成多行、把输入框顶高；
+                        // 举例改成框下方与浮动标签同字号的小字提示，输入后隐藏
+                        label = "匹配值",
                         singleLine = true,
                     )
+                    if (value.isEmpty()) {
+                        spec?.placeholder?.let { DialogNote("例：$it") }
+                    }
                     if (valueCandidates.isNotEmpty()) {
                         Column(
                             modifier = Modifier
