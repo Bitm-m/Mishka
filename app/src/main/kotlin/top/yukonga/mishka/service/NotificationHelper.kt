@@ -107,14 +107,6 @@ object NotificationHelper {
             Notification.Builder(context)
         }
 
-    /** setForegroundServiceBehavior 是 API 31 API；低版本忽略（行为等同系统默认）。 */
-    private fun Notification.Builder.withForegroundBehavior(): Notification.Builder {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-        }
-        return this
-    }
-
     // === VPN 通知 ===
 
     fun buildNotification(context: Context, title: String, content: String): Notification {
@@ -133,7 +125,7 @@ object NotificationHelper {
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .withForegroundBehavior()
+            .applyForegroundImmediate()
             .build()
     }
 
@@ -178,7 +170,7 @@ object NotificationHelper {
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .withForegroundBehavior()
+            .applyForegroundImmediate()
             .build()
     }
 
@@ -199,7 +191,7 @@ object NotificationHelper {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .withForegroundBehavior()
+            .applyForegroundImmediate()
             .build()
     }
 
@@ -234,7 +226,7 @@ object NotificationHelper {
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .withForegroundBehavior()
+            .applyForegroundImmediate()
             .build()
     }
 
@@ -299,3 +291,11 @@ object NotificationHelper {
         return id
     }
 }
+
+/** API 31+ 才有 setForegroundServiceBehavior；更低版本保持原样（FGS 本就立即显示） */
+private fun Notification.Builder.applyForegroundImmediate(): Notification.Builder =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+    } else {
+        this
+    }

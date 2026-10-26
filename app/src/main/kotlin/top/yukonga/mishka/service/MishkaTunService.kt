@@ -361,7 +361,7 @@ class MishkaTunService : VpnService() {
         addAddress(RuntimeOverrideBuilder.VPN_GATEWAY, RuntimeOverrideBuilder.VPN_PREFIX)
         setMtu(RuntimeOverrideBuilder.VPN_TUN_MTU)
         setSession("Mishka")
-        // setBlocking 是 API 29 API；低版本的 TUN fd 默认即非阻塞，等价行为。
+        // setBlocking 是 API 29 API；低版本的 TUN fd 默认即非阻塞，等价行为
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setBlocking(false)
         val bypassPrivate = storage.getString(StorageKeys.VPN_BYPASS_PRIVATE_NETWORK, "true") == "true"
         if (bypassPrivate) {
@@ -418,7 +418,7 @@ class MishkaTunService : VpnService() {
 
             else -> addDisallowedApplication(packageName)
         }
-        // setMetered / setHttpProxy 都是 API 29 API；低版本跳过（VPN 按计费网络对待、不设 VPN 级 HTTP 代理）。
+        // setMetered / setHttpProxy 都是 API 29 API；低版本跳过（按计量网络对待、不设 VPN 级 HTTP 代理）
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setMetered(false)
         proxyAddress?.let { (address, port) ->
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -429,12 +429,17 @@ class MishkaTunService : VpnService() {
     }.establish()?.detachFd()
 
     private fun clearCloseOnExec(fd: Int) {
-        val descriptor = ParcelFileDescriptor.adoptFd(fd)
-        try {
-            val flags = Os.fcntlInt(descriptor.fileDescriptor, OsConstants.F_GETFD, 0)
-            Os.fcntlInt(descriptor.fileDescriptor, OsConstants.F_SETFD, flags and OsConstants.FD_CLOEXEC.inv())
-        } finally {
-            descriptor.detachFd()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val descriptor = ParcelFileDescriptor.adoptFd(fd)
+            try {
+                val flags = Os.fcntlInt(descriptor.fileDescriptor, OsConstants.F_GETFD, 0)
+                Os.fcntlInt(descriptor.fileDescriptor, OsConstants.F_SETFD, flags and OsConstants.FD_CLOEXEC.inv())
+            } finally {
+                descriptor.detachFd()
+            }
+        } else {
+            // Os.fcntlInt 自 API 30 才存在，API 26-29 走 JNI 直接调用 fcntl
+            check(ProcessHelper.nativeClearCloexec(fd)) { "fcntl(F_SETFD) failed on fd=$fd" }
         }
     }
 

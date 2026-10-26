@@ -51,19 +51,16 @@ class ProfileWorker : Service() {
     override fun onCreate() {
         super.onCreate()
         try {
-            // 带 foregroundServiceType 的三参 startForeground 是 API 29+；specialUse 类型 API 34 才有，
-            // 与 WifiPolicyMonitorService 一致：34+ 传类型，低版本退回两参（清单里的类型声明只在新系统生效）。
+            val notification = NotificationHelper.buildProfileWorkerNotification(this)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(
                     NotificationHelper.NOTIFICATION_ID_PROFILE_WORKER,
-                    NotificationHelper.buildProfileWorkerNotification(this),
+                    notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
                 )
             } else {
-                startForeground(
-                    NotificationHelper.NOTIFICATION_ID_PROFILE_WORKER,
-                    NotificationHelper.buildProfileWorkerNotification(this),
-                )
+                // 三参数 startForeground 自 API 29 起才存在，API 26-28 使用两参数版本
+                startForeground(NotificationHelper.NOTIFICATION_ID_PROFILE_WORKER, notification)
             }
         } catch (e: Exception) {
             Log.e(TAG, "startForeground failed", e)

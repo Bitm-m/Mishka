@@ -38,7 +38,6 @@ internal fun File.lastModifiedNoFollow(): Long? = try {
     null
 }
 
-/** 不跟随符号链接地恢复最后修改时间，atime 保持不变。成功返回 true。 */
 internal fun File.setLastModifiedNoFollow(millis: Long): Boolean {
     // android.system.Os 没有 utimensat（SDK 里并不存在这个方法），无法按 NOFOLLOW 写时间；
     // 退化为：路径本身是符号链接时直接跳过——绝不跟随到链接目标上改时间，

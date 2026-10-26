@@ -887,6 +887,42 @@ private fun HoldDownEffect(holdDown: Boolean, interactionSource: MutableInteract
 }
 
 @Composable
+private fun ProxyDelayCapsule(
+    delayText: String,
+    delay: Int?,
+    isTesting: Boolean,
+    onTestDelay: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .sizeIn(minWidth = 40.dp, minHeight = 20.dp)
+            .squircleBackground(MiuixTheme.colorScheme.surface, 10.dp)
+            .clickable(
+                enabled = !isTesting,
+                interactionSource = null,
+                indication = null,
+            ) { onTestDelay() }
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (isTesting) {
+            CircularProgressIndicator(
+                size = 12.dp,
+                strokeWidth = 2.dp,
+            )
+        } else {
+            Text(
+                text = delayText,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = StatusColors.delay(delay),
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
 private fun ProxyGroupHeader(
     group: ProxyGroupUi,
     showIcon: Boolean,
@@ -967,33 +1003,12 @@ private fun ProxyGroupHeader(
             nowDelay < 0 -> timeoutText
             else -> "$nowDelay"
         }
-        Box(
-            modifier = Modifier
-                .sizeIn(minWidth = 40.dp, minHeight = 20.dp)
-                .squircleBackground(MiuixTheme.colorScheme.surface, 10.dp)
-                .clickable(
-                    enabled = !isTesting,
-                    interactionSource = null,
-                    indication = null,
-                ) { onTestDelay() }
-                .padding(horizontal = 6.dp, vertical = 2.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (isTesting) {
-                CircularProgressIndicator(
-                    size = 12.dp,
-                    strokeWidth = 2.dp,
-                )
-            } else {
-                Text(
-                    text = delayText,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = StatusColors.delay(nowDelay),
-                    maxLines = 1,
-                )
-            }
-        }
+        ProxyDelayCapsule(
+            delayText = delayText,
+            delay = nowDelay,
+            isTesting = isTesting,
+            onTestDelay = onTestDelay,
+        )
         }
         Row(
             modifier = Modifier
@@ -1269,32 +1284,12 @@ private fun ProxyGroupGridCard(
                     color = MiuixTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .squircleBackground(StatusColors.delay(nowDelay).copy(alpha = 0.14f), 10.dp)
-                        .clickable(
-                            enabled = !isTesting,
-                            interactionSource = null,
-                            indication = null,
-                        ) { onTestDelay() }
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (isTesting) {
-                        CircularProgressIndicator(
-                            size = 12.dp,
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        Text(
-                            text = delayText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = StatusColors.delay(nowDelay),
-                            maxLines = 1,
-                        )
-                    }
-                }
+                ProxyDelayCapsule(
+                    delayText = delayText,
+                    delay = nowDelay,
+                    isTesting = isTesting,
+                    onTestDelay = onTestDelay,
+                )
             }
         }
         if (showCardIcon) {

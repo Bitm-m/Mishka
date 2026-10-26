@@ -1,7 +1,5 @@
 package top.yukonga.mishka.service
 
-import top.yukonga.mishka.platform.startForegroundServiceCompat
-
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -9,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import top.yukonga.mishka.platform.startForegroundServiceCompat
 import kotlin.time.Clock
 
 /**

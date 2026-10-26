@@ -4,8 +4,8 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
+import android.net.Uri
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -98,7 +98,7 @@ class ProfileUpdateScheduler(
          * 并依赖 [ProfileReceiver] 的 catch + re-arm 兜底。
          */
         fun scheduleAlarm(alarmManager: AlarmManager, triggerAt: Long, pi: PendingIntent) {
-            // canScheduleExactAlarms 是 API 31 API；31 以下精确闹钟不需要授权检查，直接走精确分支。
+            // canScheduleExactAlarms 自 API 31 起才存在；更低版本无需权限，直接精确调度
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms()) {
                 alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
             } else {
