@@ -1750,8 +1750,6 @@ private fun RuleEditDialog(
     var keepFlags by remember(initialRaw) { mutableStateOf(initial?.flags?.filter { !it.equals("no-resolve", ignoreCase = true) } ?: emptyList()) }
     var rawMode by remember { mutableStateOf(false) }
     var raw by remember { mutableStateOf(initialRaw.orEmpty()) }
-    var pickType by remember { mutableStateOf(false) }
-    var pickPolicy by remember { mutableStateOf(false) }
     val spec = RuleText.spec(type)
     val isMatch = type == "MATCH"
     val noValue = isMatch || spec?.noPayload == true
@@ -1777,12 +1775,12 @@ private fun RuleEditDialog(
         onDismissRequest = onDismiss,
     ) {
         // 固定高度、取消 / 确定钉在底部：弹窗本体不再上下滑动（正文区 weight 占满剩余高度），
-        // 展开的类型 / 匹配值候选 / 目标策略列表只在正文区剩余空间里各自滚动——
-        // 避免弹窗本体滚动条与窗内几个列表的滚动条都贴在右缘重叠冲突
+        // 类型 / 目标策略像表达式列表一样直接展开，只在正文区剩余空间里各自滚动；
+        // no-resolve 与预览固定在正文区下方、按钮上方，不随列表展开位置漂移
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(560.dp),
+                .height(640.dp),
         ) {
             Column(
                 modifier = Modifier
@@ -1812,19 +1810,22 @@ private fun RuleEditDialog(
                 BasicComponent(
                     title = "类型",
                     summary = spec?.let { "${it.value} · ${it.label}" } ?: type,
-                    endActions = { Text(text = if (pickType) "收起" else "选择", fontSize = 13.sp, color = MiuixTheme.colorScheme.primary) },
-                    onClick = { pickType = !pickType },
                 )
-                if (pickType) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f, fill = false)
-                            .verticalScrollWithScrollbar(),
-                    ) {
-                        for (t in RULE_TYPES) {
-                            BasicComponent(title = t.value, summary = t.label, onClick = { type = t.value; pickType = false })
-                        }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false)
+                        .verticalScrollWithScrollbar(),
+                ) {
+                    for (t in RULE_TYPES) {
+                        BasicComponent(
+                            title = t.value,
+                            summary = t.label,
+                            endActions = {
+                                if (t.value == type) Text(text = "当前", fontSize = 12.sp, color = MiuixTheme.colorScheme.primary)
+                            },
+                            onClick = { type = t.value },
+                        )
                     }
                 }
                 if (!noValue) {
@@ -1832,9 +1833,14 @@ private fun RuleEditDialog(
                         value = value,
                         onValueChange = { value = it },
                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                        label = spec?.placeholder?.let { "匹配值，例：$it" } ?: "匹配值",
-                        singleLine = spec?.multi != true,
+                        // 标签只写「匹配值」：空状态时标签也不会被长举例撑成多行、把输入框顶高；
+                        // 举例改成框下方与浮动标签同字号的小字提示，输入后隐藏
+                        label = "匹配值",
+                        singleLine = true,
                     )
+                    if (value.isEmpty()) {
+                        spec?.placeholder?.let { DialogNote("例：$it") }
+                    }
                     if (valueCandidates.isNotEmpty()) {
                         Column(
                             modifier = Modifier
@@ -1849,22 +1855,29 @@ private fun RuleEditDialog(
                 BasicComponent(
                     title = if (subRule) "目标子规则" else "目标策略",
                     summary = policy.ifEmpty { "（未选）" },
-                    endActions = { Text(text = if (pickPolicy) "收起" else "选择", fontSize = 13.sp, color = MiuixTheme.colorScheme.primary) },
-                    onClick = { pickPolicy = !pickPolicy },
                 )
-                if (pickPolicy) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f, fill = false)
-                            .verticalScrollWithScrollbar(),
-                    ) {
-                        if (policyCandidates.isEmpty()) DialogNote("文档里还没有可选的目标")
-                        for (c in policyCandidates) {
-                            BasicComponent(title = c.value, summary = c.label.takeIf { it != c.value }, onClick = { policy = c.value; pickPolicy = false })
-                        }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false)
+                        .verticalScrollWithScrollbar(),
+                ) {
+                    if (policyCandidates.isEmpty()) DialogNote("文档里还没有可选的目标")
+                    for (c in policyCandidates) {
+                        BasicComponent(
+                            title = c.value,
+                            summary = c.label.takeIf { it != c.value },
+                            endActions = {
+                                if (c.value == policy) Text(text = "当前", fontSize = 12.sp, color = MiuixTheme.colorScheme.primary)
+                            },
+                            onClick = { policy = c.value },
+                        )
                     }
                 }
+            }
+            }
+            // no-resolve 与预览固定在正文区底部（按钮上方），不随上面列表的展开 / 滚动漂移
+            if (!rawMode) {
                 if (!isMatch) {
                     BasicComponent(
                         title = "no-resolve",
@@ -1875,7 +1888,6 @@ private fun RuleEditDialog(
                 }
                 if (keepFlags.isNotEmpty()) DialogNote("原规则带有参数 ${keepFlags.joinToString(",")}，会原样保留在末尾")
                 DialogNote("预览：$preview")
-            }
             }
             DialogButtons(onDismiss = onDismiss, confirmLabel = "确定") {
                 if (rawMode) {
