@@ -1750,6 +1750,7 @@ private fun RuleEditDialog(
     var keepFlags by remember(initialRaw) { mutableStateOf(initial?.flags?.filter { !it.equals("no-resolve", ignoreCase = true) } ?: emptyList()) }
     var rawMode by remember { mutableStateOf(false) }
     var raw by remember { mutableStateOf(initialRaw.orEmpty()) }
+    var picker by remember { mutableStateOf<String?>(null) }
     val spec = RuleText.spec(type)
     val isMatch = type == "MATCH"
     val noValue = isMatch || spec?.noPayload == true
@@ -1767,25 +1768,30 @@ private fun RuleEditDialog(
         return true
     }
 
+    // 类型 / 目标策略：点击字段行弹出 OptionPickerDialog 选择（带「当前」标记），与 fake-ip 规则一致
+    if (picker != null) {
+        val pickingType = picker == "type"
+        OptionPickerDialog(
+            title = if (pickingType) "类型" else if (subRule) "目标子规则" else "目标策略",
+            options = if (pickingType) RULE_TYPES.map { FormOption(it.value, it.label) } else policyCandidates,
+            current = if (pickingType) type else policy,
+            onDismiss = { picker = null },
+            onPick = { selected ->
+                if (pickingType) type = selected else policy = selected
+                picker = null
+            },
+        )
+        return
+    }
+
     WindowDialog(
         show = true,
         title = if (initialRaw == null) "添加规则" else "编辑规则",
         summary = spec?.label ?: "未知类型 $type（照样按 类型,匹配值,策略 写）",
         onDismissRequest = onDismiss,
     ) {
-        // 固定高度、取消 / 确定钉在底部：弹窗本体不再上下滑动（正文区 weight 占满剩余高度），
-        // 类型 / 目标策略像表达式列表一样直接展开，只在正文区剩余空间里各自滚动；
-        // no-resolve 与预览固定在正文区下方、按钮上方，不随列表展开位置漂移
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(640.dp),
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-            ) {
+        // 类型 / 目标策略已改为点击弹窗选择，弹窗高度随内容；no-resolve 与预览排在按钮上方
+        Column(modifier = Modifier.fillMaxWidth()) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(
                     text = if (rawMode) "切换为可视化编辑" else "切换为文本编辑",
@@ -1800,7 +1806,7 @@ private fun RuleEditDialog(
                 TextField(
                     value = raw,
                     onValueChange = { raw = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp),
                     label = "规则原文：类型,匹配值,策略[,no-resolve]",
                     singleLine = false,
                 )
@@ -1810,24 +1816,8 @@ private fun RuleEditDialog(
                     title = "类型",
                     // 说明与类型名相同时（如 DOMAIN-KEYWORD）只显示一次，不拼成「X · X」
                     summary = spec?.let { if (it.label == it.value) it.value else "${it.value} · ${it.label}" } ?: type,
+                    onClick = { picker = "type" },
                 )
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f, fill = false)
-                        .verticalScrollWithScrollbar(),
-                ) {
-                    for (t in RULE_TYPES) {
-                        BasicComponent(
-                            title = t.value,
-                            summary = t.label.takeIf { it != t.value },
-                            endActions = {
-                                if (t.value == type) Text(text = "当前", fontSize = 12.sp, color = MiuixTheme.colorScheme.primary)
-                            },
-                            onClick = { type = t.value },
-                        )
-                    }
-                }
                 if (!noValue) {
                     TextField(
                         value = value,
@@ -1845,28 +1835,11 @@ private fun RuleEditDialog(
                 BasicComponent(
                     title = if (subRule) "目标子规则" else "目标策略",
                     summary = policy.ifEmpty { "（未选）" },
+                    onClick = if (policyCandidates.isNotEmpty()) ({ picker = "policy" }) else null,
                 )
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f, fill = false)
-                        .verticalScrollWithScrollbar(),
-                ) {
-                    if (policyCandidates.isEmpty()) DialogNote("文档里还没有可选的目标")
-                    for (c in policyCandidates) {
-                        BasicComponent(
-                            title = c.value,
-                            summary = c.label.takeIf { it != c.value },
-                            endActions = {
-                                if (c.value == policy) Text(text = "当前", fontSize = 12.sp, color = MiuixTheme.colorScheme.primary)
-                            },
-                            onClick = { policy = c.value },
-                        )
-                    }
-                }
+                if (policyCandidates.isEmpty()) DialogNote("文档里还没有可选的目标")
             }
-            }
-            // no-resolve 与预览固定在正文区底部（按钮上方），不随上面列表的展开 / 滚动漂移
+            // no-resolve 与预览排在正文下方、按钮上方
             if (!rawMode) {
                 if (!isMatch) {
                     BasicComponent(
