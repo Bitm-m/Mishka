@@ -35,6 +35,7 @@ import top.yukonga.mishka.platform.ProxyState
 import top.yukonga.mishka.platform.StorageKeys
 import top.yukonga.mishka.platform.TunMode
 import top.yukonga.mishka.service.MishkaRootService.Companion.EXTRA_SUBMODE
+import top.yukonga.mishka.util.describe
 import top.yukonga.mishka.viewmodel.AppProxyMode
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
@@ -284,7 +285,25 @@ class MishkaRootService : Service() {
             if (submodeMismatch) {
                 Log.i(TAG, "Submode changed while app was killed (active=$submodeActive, requested=${submode.storageValue}), restarting")
             }
-            if (existingPid > 0 && !subscriptionMismatch && !tetherModeMismatch && !submodeMismatch) {
+            // 旧版本的 ROOT 进程没有独立 DNS 端口，无法安全复用。
+            val dnsPortMissing = existingPid > 0 &&
+                storage.getString(StorageKeys.ROOT_DNS_PORT, "").toIntOrNull()?.let { it in 1..65535 } != true
+            if (dnsPortMissing) {
+                Log.i(TAG, "Existing ROOT process has no DNS port; cleaning up before restart")
+                RootHelper.cleanupOrphanedMihomo(tunDevice = existingTunDevice)
+                if (RootHelper.isAliveAsRoot(existingPid)) {
+                    Log.e(TAG, "Cannot stop old ROOT process pid=$existingPid")
+                    ProxyServiceBridge.updateState(ProxyServiceStatus(
+                        ProxyState.Error, errorMessage = getString(R.string.error_start_failed), tunMode = tunMode,
+                    ))
+                    stopSelf()
+                    return@launch
+                }
+                teardownActiveRootRules(storage)
+                clearPersistedState(storage)
+                storage.putString(StorageKeys.ROOT_LAST_STOP_CLEAN, "true")
+            }
+            if (existingPid > 0 && !dnsPortMissing && !subscriptionMismatch && !tetherModeMismatch && !submodeMismatch) {
                 if (runner.attachToExisting(
                         existingPid,
                         existingSecret,
@@ -302,33 +321,42 @@ class MishkaRootService : Service() {
                     // 在内核里也一直活着），无需重建。但系统重启 / 与其他代理模块共存被清过
                     // 时规则会丢；attach 分支先 probe anyRulesPresent()，缺失才 re-apply。
                     // ROOT_ATTACH_FORCE_REAPPLY=true 可强制 re-apply，诊断用。
-                    when (submode) {
-                        Submode.Tun -> {
-                            runCatching {
-                                ActiveProfileRuntimeConfig.updateTunValues(
-                                    this@MishkaRootService,
-                                    subscriptionId,
-                                    mapOf("enable" to true),
-                                )
-                            }.onFailure { Log.w(TAG, "Unable to sync tun.enable in the active profile while attaching", it) }
-                            val activeMode = RootTetherHijacker.Mode.from(tetherModeActive.ifEmpty { tetherModeRequested })
-                            val tproxySupported = activeMode == RootTetherHijacker.Mode.PROXY &&
-                                    RootTetherHijacker.probeTproxySupport()
-                            if (shouldReapplyOnAttach(storage, RootTetherHijacker::anyRulesPresent)) {
-                                applyTetherRulesActive(storage, tproxySupported)
+                    try {
+                        when (submode) {
+                            Submode.Tun -> {
+                                runCatching {
+                                    ActiveProfileRuntimeConfig.updateTunValues(
+                                        this@MishkaRootService,
+                                        subscriptionId,
+                                        mapOf("enable" to true),
+                                    )
+                                }.onFailure { Log.w(TAG, "Unable to sync tun.enable in the active profile while attaching", it) }
+                                val activeMode = RootTetherHijacker.Mode.from(tetherModeActive.ifEmpty { tetherModeRequested })
+                                val tproxySupported = activeMode == RootTetherHijacker.Mode.PROXY &&
+                                        RootTetherHijacker.probeTproxySupport()
+                                if (shouldReapplyOnAttach(storage, RootTetherHijacker::anyRulesPresent)) {
+                                    applyTetherRulesActive(storage, tproxySupported)
+                                }
                             }
-                        }
 
-                        Submode.Tproxy -> {
-                            val appFilter = readTproxyAppFilter(storage)
-                            if (shouldReapplyOnAttach(storage, RootTproxyApplier::anyRulesPresent)) {
-                                applyTproxyRules(storage, appFilter)
+                            Submode.Tproxy -> {
+                                val appFilter = readTproxyAppFilter(storage)
+                                if (shouldReapplyOnAttach(storage, RootTproxyApplier::anyRulesPresent)) {
+                                    applyTproxyRules(storage, appFilter)
+                                }
+                                scheduleTproxyUidRefresh(storage, appFilter)
                             }
-                            scheduleTproxyUidRefresh(storage, appFilter)
-                        }
 
-                        // eBPF 重定向由 mihomo ebpf listener 自己挂 TC，App 侧无规则可补
-                        Submode.Ebpf -> {}
+                            // eBPF 重定向由 mihomo ebpf listener 自己挂 TC，App 侧无规则可补
+                            Submode.Ebpf -> {}
+                        }
+                        applyRootDns(storage, submode)
+                    } catch (e: CancellationException) {
+                        withContext(NonCancellable) { runner.stop(); teardownActiveRootRules(storage) }
+                        throw e
+                    } catch (e: Exception) {
+                        failRootRouting(storage, tunMode, e)
+                        return@launch
                     }
                     ProxyServiceBridge.updateState(
                         ProxyServiceStatus(
@@ -585,7 +613,21 @@ class MishkaRootService : Service() {
                 preferUserTunOverrides = profileModeConfig.encrypted || transformPlan.transformPath != null,
             )
 
+            try {
+                RootDnsApplier.prepare(rootTetherInterfaces(storage))
+            } catch (e: CancellationException) {
+                withContext(NonCancellable) { teardownActiveRootRules(storage) }
+                throw e
+            } catch (e: Exception) {
+                failRootRouting(storage, tunMode, e)
+                return@launch
+            }
+
             // 5. 以 root 启动 mihomo
+            // 端口必须在启动前选定并持久化；attach 时复用它，否则新进程会选到另一个端口，
+            // 规则 DNAT 到无人监听的端口。
+            val rootDnsPort = RootDnsApplier.allocatePort()
+            storage.putString(StorageKeys.ROOT_DNS_PORT, rootDnsPort.toString())
             // age 加密订阅：runtime/ 保持密文，密钥与覆写选择来自同一份 imported DB 快照。
             storage.putString(StorageKeys.ROOT_LAST_STOP_CLEAN, "false")
             val success = runner.start(
@@ -599,8 +641,11 @@ class MishkaRootService : Service() {
                 transformPath = transformPlan.transformPath,
                 preferTransformMixedPort = transformPlan.transformPath != null && viaProxy && userOverride.mixedPort == null,
                 processResolverAddress = processResolver.address,
+                rootDnsPort = rootDnsPort,
             )
             if (!success) {
+                withContext(NonCancellable) { teardownActiveRootRules(storage) }
+                clearPersistedState(storage)
                 val errorMsg = runner.errorMessage.ifBlank { getString(R.string.error_start_failed) }
                 Log.e(TAG, "Failed to start mihomo (ROOT): $errorMsg")
                 ProxyServiceBridge.updateState(
@@ -619,21 +664,30 @@ class MishkaRootService : Service() {
             storage.putString(StorageKeys.ROOT_SUBMODE_ACTIVE, submode.storageValue)
 
             // 6.5 按 submode apply 对应的 netfilter 规则集
-            when (submode) {
-                Submode.Tun -> applyTetherRules(storage, tproxyForTether)
-                Submode.Tproxy -> {
-                    val appFilter = RuntimeOverrideBuilder.resolveTproxyAppFilter(
-                        context = this@MishkaRootService,
-                        userTun = userOverride.tun,
-                        profileTunElement = profileParameters?.tun,
-                        preferUserTunOverrides = profileModeConfig.encrypted || transformPlan.transformPath != null,
-                    )
-                    persistTproxyAppFilter(storage, appFilter)
-                    applyTproxyRules(storage, appFilter)
-                    scheduleTproxyUidRefresh(storage, appFilter)
+            try {
+                when (submode) {
+                    Submode.Tun -> applyTetherRules(storage, tproxyForTether)
+                    Submode.Tproxy -> {
+                        val appFilter = RuntimeOverrideBuilder.resolveTproxyAppFilter(
+                            context = this@MishkaRootService,
+                            userTun = userOverride.tun,
+                            profileTunElement = profileParameters?.tun,
+                            preferUserTunOverrides = profileModeConfig.encrypted || transformPlan.transformPath != null,
+                        )
+                        persistTproxyAppFilter(storage, appFilter)
+                        applyTproxyRules(storage, appFilter)
+                        scheduleTproxyUidRefresh(storage, appFilter)
+                    }
+                    // eBPF 数据面由 mihomo listener 管理；DNS 控制面仍独立安装。
+                    Submode.Ebpf -> {}
                 }
-                // eBPF submode 不用 netfilter：流量劫持完全由 mihomo ebpf listener 完成
-                Submode.Ebpf -> {}
+                applyRootDns(storage, submode)
+            } catch (e: CancellationException) {
+                withContext(NonCancellable) { runner.stop(); teardownActiveRootRules(storage) }
+                throw e
+            } catch (e: Exception) {
+                failRootRouting(storage, tunMode, e)
+                return@launch
             }
 
             // 7. 更新状态和通知
@@ -656,6 +710,40 @@ class MishkaRootService : Service() {
                 subscriptionId
             ) else ConfigGenerator.getWorkDir(this@MishkaRootService)
             startProcessMonitor(workDir, subscriptionId)
+        }
+    }
+
+    private fun rootTetherInterfaces(storage: PlatformStorage): List<String> =
+        RootTetherHijacker.parseInterfaces(
+            storage.getString(StorageKeys.ROOT_TETHER_IFACES, RootTetherHijacker.DEFAULT_IFACES)
+        )
+
+    private fun applyRootDns(storage: PlatformStorage, submode: Submode) {
+        val port = storage.getString(StorageKeys.ROOT_DNS_PORT, "").toIntOrNull()
+            ?: throw IllegalStateException("ROOT DNS port is not persisted")
+        val allowed = rootTetherInterfaces(storage)
+        val proxyTether = submode == Submode.Tproxy || (submode == Submode.Tun &&
+            RootTetherHijacker.Mode.from(storage.getString(
+                StorageKeys.ROOT_TETHER_MODE_ACTIVE, RootTetherHijacker.Mode.BYPASS.storageValue
+            )) == RootTetherHijacker.Mode.PROXY)
+        RootDnsApplier.apply(applicationInfo.uid, if (proxyTether) allowed else emptyList(), allowed, port)
+    }
+
+    private suspend fun failRootRouting(storage: PlatformStorage, tunMode: TunMode, error: Exception) {
+        Log.e(TAG, "Failed to install ROOT routing", error)
+        withContext(NonCancellable) {
+            val confirmedDead = runner.stop()
+            try { teardownActiveRootRules(storage) } catch (cleanupError: Exception) {
+                Log.e(TAG, "ROOT routing cleanup failed", cleanupError)
+            }
+            if (confirmedDead) clearPersistedState(storage)
+            storage.putString(StorageKeys.SERVICE_WAS_RUNNING, "false")
+            ProxyServiceBridge.updateState(ProxyServiceStatus(
+                ProxyState.Error,
+                errorMessage = getString(R.string.error_generic_start_failed, error.describe()),
+                tunMode = tunMode,
+            ))
+            stopSelf()
         }
     }
 
@@ -787,9 +875,9 @@ class MishkaRootService : Service() {
                 else -> {
                     RootTetherHijacker.teardown()
                     RootTproxyApplier.teardown()
-                    RootDnsApplier.teardown()
                 }
             }
+            check(RootDnsApplier.teardown()) { "Failed to remove ROOT DNS routing" }
         }
     }
 
@@ -923,6 +1011,7 @@ class MishkaRootService : Service() {
         BootSession.clear(storage)
         storage.putString(StorageKeys.ROOT_TETHER_MODE_ACTIVE, "")
         storage.putString(StorageKeys.ROOT_SUBMODE_ACTIVE, "")
+        storage.putString(StorageKeys.ROOT_DNS_PORT, "")
     }
 
     /** 全新启动路径：用当前设置的 tether mode + 外部传入的 TPROXY 能力 apply 规则。 */

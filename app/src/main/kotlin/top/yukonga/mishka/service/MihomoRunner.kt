@@ -119,6 +119,7 @@ class MihomoRunner(private val context: Context) {
         vpnHttpFd: Int = -1,
         vpnPlatformSocket: String? = null,
         processResolverAddress: String = "",
+        rootDnsPort: Int? = null,
     ): Boolean = withContext(Dispatchers.IO) {
         if (isRunning) {
             Log.w(TAG, "mihomo already running")
@@ -171,6 +172,9 @@ class MihomoRunner(private val context: Context) {
                     if (vpnHttpFd >= 0) {
                         add("--vpn-http-fd"); add(vpnHttpFd.toString())
                     }
+                } else {
+                    add("--root-dns")
+                    add("--root-dns-port"); add(requireNotNull(rootDnsPort).toString())
                 }
                 if (transformPath != null) {
                     add("--transform"); add(transformPath)
