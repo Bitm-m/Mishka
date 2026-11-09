@@ -27,6 +27,8 @@ object StorageKeys {
     const val ROOT_TPROXY_APP_MODE_ACTIVE = "root_tproxy_app_mode_active"
     const val ROOT_TPROXY_APP_PACKAGES_ACTIVE = "root_tproxy_app_packages_active"
     const val ROOT_TPROXY_APP_USERS_ACTIVE = "root_tproxy_app_users_active"
+    // 本次 ROOT 进程实际绑定的 loopback DNS 端口；attach 时必须复用，不能重新选端口
+    const val ROOT_DNS_PORT = "root_dns_port"
 
     // 启动时刻的 boot session 标记，用于 reopen 重连前识别设备是否重启过（重启会杀死 root
     // mihomo，不能把过期 PID 误当"仍存活"）。判定逻辑见 [BootSession]
