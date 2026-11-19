@@ -377,7 +377,6 @@ fun ProxyScreen(
 
     val backdrop = rememberBlurBackdrop()
     val blurActive = backdrop != null
-    val barColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
 
     Scaffold(
         modifier = modifier,
@@ -385,7 +384,6 @@ fun ProxyScreen(
             BlurredBar(backdrop = backdrop, blurActive = blurActive) {
                 AdaptiveTopAppBar(
                     title = stringResource(R.string.proxy_title),
-                    color = barColor,
                     scrollBehavior = scrollBehavior,
                     actions = {
                         if (displayGroups.isNotEmpty()) {
