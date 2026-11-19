@@ -120,16 +120,19 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew "-Pmihomo.version=${MIHOMO_VERSION}" :app:assembleDebug --stacktrace 2>&1 | tee /tmp/compile.log > /dev/null || true
-          {
-            echo '## Build diagnostics'
-            echo '```'
-            grep -E '^e: |error: |Caused by:|FAILURE:|What went wrong:|\* Exception is:|> Task .* FAILED|A problem occurred' /tmp/compile.log | head -60
-            echo '```'
-            echo '## Tail 120 lines'
-            echo '```'
-            tail -120 /tmp/compile.log
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          { grep -E '^e: |Caused by:|FAILURE:|What went wrong:|> Task .* FAILED|A problem occurred|Execution failed' /tmp/compile.log | head -80; echo '--- TAIL ---'; tail -60 /tmp/compile.log; } > /tmp/diag.txt || true
+          python3 - <<'PYEOF'
+          import urllib.parse
+          text = open('/tmp/diag.txt').read() or '(diag empty)'
+          chunk = ''
+          for line in text.splitlines():
+              if len(chunk) + len(line) > 2500:
+                  print('::error::' + urllib.parse.quote(chunk))
+                  chunk = ''
+              chunk += line + '\n'
+          if chunk.strip():
+              print('::error::' + urllib.parse.quote(chunk))
+          PYEOF
           exit 0
 
       - name: Build Debug APK
