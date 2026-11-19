@@ -18,7 +18,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.state.ToggleableState
@@ -34,10 +33,11 @@ import top.yukonga.mishka.domain.model.OverrideProfile
 import top.yukonga.mishka.domain.model.orderedOverrideIds
 import top.yukonga.mishka.ui.component.AdaptiveTopAppBar
 import top.yukonga.mishka.ui.component.HintCard
+import top.yukonga.mishka.ui.component.TopBarIconButton
 import top.yukonga.mishka.ui.component.blur.BlurredBar
 import top.yukonga.mishka.ui.component.blur.rememberBlurBackdrop
+import top.yukonga.mishka.ui.component.overScrollVertical
 import top.yukonga.mishka.ui.theme.StatusColors
-import top.yukonga.mishka.ui.util.WideContentBox
 import top.yukonga.mishka.ui.util.horizontalCutoutPadding
 import top.yukonga.mishka.viewmodel.OverrideProfileViewModel
 import top.yukonga.mishka.viewmodel.SubscriptionViewModel
@@ -45,7 +45,6 @@ import top.yukonga.mishka.ui.component.verticalScrollbar
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Checkbox
-import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -53,10 +52,9 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
+import top.yukonga.miuix.kmp.icon.glass.Ok as GlassOk
 
 @Composable
 fun SubscriptionOverridesScreen(
@@ -101,108 +99,96 @@ fun SubscriptionOverridesScreen(
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberBlurBackdrop()
     val blurActive = backdrop != null
-    val barColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
 
     Scaffold(
         topBar = {
             BlurredBar(backdrop = backdrop, blurActive = blurActive) {
                 AdaptiveTopAppBar(
                     title = stringResource(R.string.subscription_overrides),
-                    color = barColor,
                     scrollBehavior = scrollBehavior,
                     navigationIcon = { OverrideBackButton(onBack) },
                     actions = {
                         val canSave = hasChanges && !overrideState.isLoading
-                        IconButton(
+                        TopBarIconButton(
                             enabled = canSave,
+                            isLoading = overrideState.isLoading,
+                            glassIcon = MiuixIcons.Glass.GlassOk,
+                            contentDescription = stringResource(R.string.common_save),
                             onClick = {
                                 overrideViewModel.setSelection(subscriptionId, selectedIds, displayed, onBack)
                             },
-                        ) {
-                            if (overrideState.isLoading) {
-                                CircularProgressIndicator(size = 20.dp, strokeWidth = 2.dp)
-                            } else {
-                                Icon(
-                                    imageVector = MiuixIcons.Ok,
-                                    contentDescription = stringResource(R.string.common_save),
-                                    tint = if (canSave) MiuixTheme.colorScheme.onSurface
-                                    else MiuixTheme.colorScheme.disabledOnSecondaryVariant,
-                                )
-                            }
-                        }
+                        )
                     },
                 )
             }
         },
     ) { innerPadding ->
-        WideContentBox { sidePadding ->
-            LazyColumn(
-                state = listState,
-                // 拖动一开始就关掉用户滚动：外层 scrollable 退出仲裁；自动翻滚走 dispatchRawDelta 不受影响
-                userScrollEnabled = dragSort.dragging < 0,
-                modifier = Modifier.verticalScrollbar(listState)
-                    .fillMaxSize()
-                    .then(dragSort.containerModifier { listState.dispatchRawDelta(it) })
-                    .horizontalCutoutPadding()
-                    .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
-                    .scrollEndHaptic()
-                    .overScrollVertical()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
-                contentPadding = PaddingValues(
-                    top = innerPadding.calculateTopPadding(),
-                    start = sidePadding,
-                    end = sidePadding,
-                ),
-            ) {
-                item(key = "top_spacer") { Spacer(Modifier.height(12.dp)) }
+        LazyColumn(
+            state = listState,
+            // 拖动一开始就关掉用户滚动：外层 scrollable 退出仲裁；自动翻滚走 dispatchRawDelta 不受影响
+            userScrollEnabled = dragSort.dragging < 0,
+            modifier = Modifier
+                .verticalScrollbar(listState)
+                .then(dragSort.containerModifier { listState.dispatchRawDelta(it) })
+                .fillMaxSize()
+                .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
+                .horizontalCutoutPadding()
+                .scrollEndHaptic()
+                .overScrollVertical(scrollBehavior)
+                .nestedScroll(scrollBehavior.nestedScrollConnection),
+            contentPadding = PaddingValues(
+                top = innerPadding.calculateTopPadding(),
+            ),
+        ) {
+            item(key = "top_spacer") { Spacer(Modifier.height(12.dp)) }
 
-                if (overrideState.error.isNotEmpty()) {
-                    item(key = "error") {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp)
-                                .padding(bottom = 12.dp),
-                            insideMargin = PaddingValues(16.dp),
-                        ) {
-                            Text(text = overrideState.error, color = StatusColors.danger)
-                        }
+            if (overrideState.error.isNotEmpty()) {
+                item(key = "error") {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp)
+                            .padding(bottom = 12.dp),
+                        insideMargin = PaddingValues(16.dp),
+                    ) {
+                        Text(text = overrideState.error, color = StatusColors.danger)
                     }
                 }
+            }
 
-                if (displayed.isEmpty()) {
-                    item(key = "empty") {
-                        HintCard(text = stringResource(R.string.override_empty))
+            if (displayed.isEmpty()) {
+                item(key = "empty") {
+                    HintCard(text = stringResource(R.string.override_empty))
+                }
+            }
+
+            // 顺序由 DragSortState.order 定（拖动中实时换位）；key 仍是覆写 id，内容按原始下标取
+            items(dragSort.order, key = { displayed.getOrNull(it) ?: it }) { index ->
+                val id = displayed.getOrNull(index)
+                val profile = id?.let { profilesById[it] }
+                if (id != null && profile != null) {
+                    val checked = id in selected
+                    DragSortRow(state = dragSort, index = index, modifier = dragSortItem(dragSort, index)) {
+                        OverrideSelectionItem(
+                            profile = profile,
+                            checked = checked,
+                            dragSort = dragSort,
+                            index = index,
+                            onToggle = {
+                                selected = if (checked) selected - id else selected + id
+                            },
+                        )
                     }
                 }
+            }
 
-                // 顺序由 DragSortState.order 定（拖动中实时换位）；key 仍是覆写 id，内容按原始下标取
-                items(dragSort.order, key = { displayed.getOrNull(it) ?: it }) { index ->
-                    val id = displayed.getOrNull(index)
-                    val profile = id?.let { profilesById[it] }
-                    if (id != null && profile != null) {
-                        val checked = id in selected
-                        DragSortRow(state = dragSort, index = index, modifier = dragSortItem(dragSort, index)) {
-                            OverrideSelectionItem(
-                                profile = profile,
-                                checked = checked,
-                                dragSort = dragSort,
-                                index = index,
-                                onToggle = {
-                                    selected = if (checked) selected - id else selected + id
-                                },
-                            )
-                        }
-                    }
-                }
 
-                item(key = "bottom_spacer") {
-                    Spacer(
-                        Modifier
-                            .height(24.dp)
-                            .navigationBarsPadding()
-                    )
-                }
+            item(key = "bottom_spacer") {
+                Spacer(
+                    Modifier
+                        .height(24.dp)
+                        .navigationBarsPadding()
+                )
             }
         }
     }

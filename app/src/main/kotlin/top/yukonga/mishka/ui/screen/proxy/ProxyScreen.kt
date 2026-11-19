@@ -99,7 +99,6 @@ import top.yukonga.mishka.ui.component.blur.rememberBlurBackdrop
 import top.yukonga.mishka.ui.platform.IconLoader
 import top.yukonga.mishka.ui.theme.LocalPlatformDensity
 import top.yukonga.mishka.ui.theme.StatusColors
-import top.yukonga.mishka.ui.util.WideContentBox
 import top.yukonga.mishka.ui.util.sheetContentSafePadding
 import top.yukonga.mishka.ui.util.sheetHeightTransition
 import top.yukonga.mishka.viewmodel.ProxyGroupUi
@@ -120,6 +119,7 @@ import top.yukonga.miuix.kmp.basic.PopupPositionProvider
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.mishka.ui.util.horizontalCutoutPadding
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 import top.yukonga.miuix.kmp.icon.extended.Close
@@ -546,315 +546,313 @@ fun ProxyScreen(
             }
         },
     ) { innerPadding ->
-        WideContentBox(modifier = if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier) { sidePadding ->
-            if (displayGroups.isEmpty()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = innerPadding.calculateTopPadding(), bottom = bottomPadding),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Text(
-                        text = stringResource(R.string.proxy_no_groups),
-                        fontSize = 16.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
-                    Text(
-                        text = stringResource(R.string.proxy_start_first),
-                        modifier = Modifier.padding(top = 6.dp),
-                        fontSize = 14.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
+        if (displayGroups.isEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = innerPadding.calculateTopPadding(), bottom = bottomPadding),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = stringResource(R.string.proxy_no_groups),
+                    fontSize = 16.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+                Text(
+                    text = stringResource(R.string.proxy_start_first),
+                    modifier = Modifier.padding(top = 6.dp),
+                    fontSize = 14.sp,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            }
+        } else {
+            val onTestNodeDelay: (String) -> Unit = remember(viewModel) {
+                { nodeName -> viewModel?.testNodeDelay(nodeName) }
+            }
+            val onSelectProxy: (String, String) -> Unit = remember(viewModel) {
+                { groupName, proxyName -> viewModel?.selectProxy(groupName, proxyName) }
+            }
+            fun visibleNodesFor(group: ProxyGroupUi): List<String> = if (hideUnavailable) {
+                group.all.filter {
+                    // 子代理组不是普通节点，不能按其当前出口的延迟过滤（对齐 zashboard）
+                    it in groupNames ||
+                        isBuiltInOutbound(it, group.nodeTypes[it].orEmpty()) ||
+                        group.delays[it] != -1
                 }
             } else {
-                val onTestNodeDelay: (String) -> Unit = remember(viewModel) {
-                    { nodeName -> viewModel?.testNodeDelay(nodeName) }
-                }
-                val onSelectProxy: (String, String) -> Unit = remember(viewModel) {
-                    { groupName, proxyName -> viewModel?.selectProxy(groupName, proxyName) }
-                }
-                fun visibleNodesFor(group: ProxyGroupUi): List<String> = if (hideUnavailable) {
-                    group.all.filter {
-                        // 子代理组不是普通节点，不能按其当前出口的延迟过滤（对齐 zashboard）
-                        it in groupNames ||
-                            isBuiltInOutbound(it, group.nodeTypes[it].orEmpty()) ||
-                            group.delays[it] != -1
-                    }
-                } else {
-                    group.all
-                }
-                val sheetGroup = popupGroup ?: lastPopupGroup
+                group.all
+            }
+            val sheetGroup = popupGroup ?: lastPopupGroup
 
-                LazyColumn(
-                    modifier = Modifier.verticalScrollbar(listState)
-                        .fillMaxSize()
-                        .scrollEndHaptic()
-                        .overScrollVertical()
-                        .nestedScroll(scrollBehavior.nestedScrollConnection),
-                    state = listState,
-                    contentPadding = PaddingValues(
-                        top = innerPadding.calculateTopPadding(),
-                        bottom = bottomPadding,
-                        start = sidePadding,
-                        end = sidePadding,
-                    ),
-                ) {
-                    if (modeHintRes != null) {
-                        item(key = "mode_hint", contentType = "proxy_mode_hint") {
-                            CardSegment(
-                                isFirst = true,
-                                isLast = true,
-                                modifier = Modifier.animateItem(placementSpec = null),
-                                outerTopPadding = 12.dp,
-                                insidePadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                            ) {
-                                Text(
-                                    text = stringResource(modeHintRes),
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                    fontSize = 13.sp,
-                                )
-                            }
+            LazyColumn(
+                modifier = Modifier.verticalScrollbar(listState)
+                    .fillMaxSize()
+                    .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
+                    .horizontalCutoutPadding()
+                    .scrollEndHaptic()
+                    .overScrollVertical()
+                    .nestedScroll(scrollBehavior.nestedScrollConnection),
+                state = listState,
+                contentPadding = PaddingValues(
+                    top = innerPadding.calculateTopPadding(),
+                    bottom = bottomPadding,
+                ),
+            ) {
+                if (modeHintRes != null) {
+                    item(key = "mode_hint", contentType = "proxy_mode_hint") {
+                        CardSegment(
+                            isFirst = true,
+                            isLast = true,
+                            modifier = Modifier.animateItem(placementSpec = null),
+                            outerTopPadding = 12.dp,
+                            insidePadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                        ) {
+                            Text(
+                                text = stringResource(modeHintRes),
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                fontSize = 13.sp,
+                            )
                         }
                     }
+                }
 
 
-                    if (twoColumnGroups) {
-                        // 双列布局：组卡片两列排列，点击整卡以弹窗展开（对齐 zashboard 的移动端卡片）
-                        val groupRows = displayGroups.chunked(2)
-                        groupRows.forEachIndexed { rowIndex, rowGroups ->
-                            item(
-                                key = "group_grid_row:$rowIndex:${rowGroups.joinToString(",") { it.name }}",
-                                contentType = "proxy_group_grid_row",
+                if (twoColumnGroups) {
+                    // 双列布局：组卡片两列排列，点击整卡以弹窗展开（对齐 zashboard 的移动端卡片）
+                    val groupRows = displayGroups.chunked(2)
+                    groupRows.forEachIndexed { rowIndex, rowGroups ->
+                        item(
+                            key = "group_grid_row:$rowIndex:${rowGroups.joinToString(",") { it.name }}",
+                            contentType = "proxy_group_grid_row",
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .animateItem(placementSpec = null)
+                                    .padding(
+                                        start = 12.dp,
+                                        end = 12.dp,
+                                        top = if (rowIndex == 0) 12.dp else 8.dp,
+                                    ),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Row(
-                                    modifier = Modifier
-                                        .animateItem(placementSpec = null)
-                                        .padding(
-                                            start = 12.dp,
-                                            end = 12.dp,
-                                            top = if (rowIndex == 0) 12.dp else 8.dp,
-                                        ),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    rowGroups.forEach { group ->
-                                        ProxyGroupGridCard(
-                                            group = group,
-                                            showIcon = showGroupIcons,
-                                            availableNodeCount = group.all.count { nodeName ->
-                                                nodeName in groupNames ||
-                                                        isBuiltInOutbound(nodeName, group.nodeTypes[nodeName].orEmpty()) ||
-                                                        (group.delays[nodeName] ?: -1) >= 0
-                                            },
-                                            nowText = nowDisplayText(group, groups, showFinalOutbound),
-                                            isTesting = group.name in uiState.testingGroups,
-                                            onTestDelay = { viewModel?.testGroupDelay(group.name) },
-                                            onClick = { popupGroupName = group.name },
-                                            modifier = Modifier.weight(1f),
-                                        )
-                                    }
-                                    if (rowGroups.size == 1 && displayGroups.size > 1) {
-                                        Spacer(Modifier.weight(1f))
-                                    }
+                                rowGroups.forEach { group ->
+                                    ProxyGroupGridCard(
+                                        group = group,
+                                        showIcon = showGroupIcons,
+                                        availableNodeCount = group.all.count { nodeName ->
+                                            nodeName in groupNames ||
+                                                    isBuiltInOutbound(nodeName, group.nodeTypes[nodeName].orEmpty()) ||
+                                                    (group.delays[nodeName] ?: -1) >= 0
+                                        },
+                                        nowText = nowDisplayText(group, groups, showFinalOutbound),
+                                        isTesting = group.name in uiState.testingGroups,
+                                        onTestDelay = { viewModel?.testGroupDelay(group.name) },
+                                        onClick = { popupGroupName = group.name },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                if (rowGroups.size == 1 && displayGroups.size > 1) {
+                                    Spacer(Modifier.weight(1f))
                                 }
                             }
                         }
+                    }
+                } else {
+                // 展平为独立 item，仅组合可见行
+                displayGroups.forEach { group ->
+                    val isExpanded = group.name in expandedGroups
+                    val rowsPresent = isExpanded || group.name in retainedGroups
+                    val isAnimating = group.name in animatingGroups
+                    val displayNodes = if (hideUnavailable) {
+                        group.all.filter {
+                            // 子代理组不是普通节点，不能按其当前出口的延迟过滤（对齐 zashboard）
+                            it in groupNames ||
+                                isBuiltInOutbound(it, group.nodeTypes[it].orEmpty()) ||
+                                group.delays[it] != -1
+                        }
                     } else {
-                    // 展平为独立 item，仅组合可见行
-                    displayGroups.forEach { group ->
-                        val isExpanded = group.name in expandedGroups
-                        val rowsPresent = isExpanded || group.name in retainedGroups
-                        val isAnimating = group.name in animatingGroups
-                        val displayNodes = if (hideUnavailable) {
-                            group.all.filter {
-                                // 子代理组不是普通节点，不能按其当前出口的延迟过滤（对齐 zashboard）
-                                it in groupNames ||
-                                    isBuiltInOutbound(it, group.nodeTypes[it].orEmpty()) ||
-                                    group.delays[it] != -1
-                            }
+                        group.all
+                    }
+                    val allRows = if (rowsPresent) {
+                        if (groupByProvider) {
+                            val sortedNodes = getSortedGroupNodes(group, displayNodes, sortOption, hideUnavailable)
+                            providerSections(sortedNodes, group)
+                                .flatMap { (_, sectionNodes) ->
+                                    sectionNodes.chunked(2).map { it.toPersistentList() }
+                                }
+                                .toPersistentList()
                         } else {
-                            group.all
+                            getGroupRows(group, displayNodes, sortOption, hideUnavailable)
                         }
-                        val allRows = if (rowsPresent) {
-                            if (groupByProvider) {
-                                val sortedNodes = getSortedGroupNodes(group, displayNodes, sortOption, hideUnavailable)
-                                providerSections(sortedNodes, group)
-                                    .flatMap { (_, sectionNodes) ->
-                                        sectionNodes.chunked(2).map { it.toPersistentList() }
-                                    }
-                                    .toPersistentList()
-                            } else {
-                                getGroupRows(group, displayNodes, sortOption, hideUnavailable)
-                            }
-                        } else {
-                            persistentListOf()
-                        }
-                        // 动画期间限制最大渲染行数防卡死，收尾后恢复全量虚拟化
-                        val rows = if (isAnimating && allRows.size > maxAnimRows) {
-                            allRows.take(maxAnimRows)
-                        } else {
-                            allRows
-                        }
-                        val groupProgress = expandProgress[group.name]
-                        val currentFraction = groupProgress?.floatValue ?: if (isExpanded) 1f else 0f
+                    } else {
+                        persistentListOf()
+                    }
+                    // 动画期间限制最大渲染行数防卡死，收尾后恢复全量虚拟化
+                    val rows = if (isAnimating && allRows.size > maxAnimRows) {
+                        allRows.take(maxAnimRows)
+                    } else {
+                        allRows
+                    }
+                    val groupProgress = expandProgress[group.name]
+                    val currentFraction = groupProgress?.floatValue ?: if (isExpanded) 1f else 0f
 
-                        item(key = "group:${group.name}", contentType = "proxy_group_header") {
-                            // 有子行时平接（0dp），完全收起后封底（16dp）
-                            val headerBottomCorner = if (currentFraction <= 0.01f) 16.dp else 0.dp
+                    item(key = "group:${group.name}", contentType = "proxy_group_header") {
+                        // 有子行时平接（0dp），完全收起后封底（16dp）
+                        val headerBottomCorner = if (currentFraction <= 0.01f) 16.dp else 0.dp
 
-                            CardSegment(
-                                isFirst = true,
-                                isLast = currentFraction <= 0.01f,
-                                modifier = Modifier.animateItem(placementSpec = null),
-                                bottomCornerRadius = headerBottomCorner,
-                                outerTopPadding = 12.dp,
-                            ) {
-                                ProxyGroupHeader(
-                                    group = group,
-                                    showIcon = showGroupIcons,
-                                    visibleNodes = displayNodes,
-                                    availableNodeCount = group.all.count { nodeName ->
-                                        nodeName in groupNames ||
-                                                isBuiltInOutbound(nodeName, group.nodeTypes[nodeName].orEmpty()) ||
-                                                (group.delays[nodeName] ?: -1) >= 0
-                                    },
-                                    nowText = nowDisplayText(group, groups, showFinalOutbound),
-                                    isExpanded = isExpanded,
-                                    expandProgress = groupProgress,
-                                    isTesting = group.name in uiState.testingGroups,
-                                    onTestDelay = { viewModel?.testGroupDelay(group.name) },
-                                    onUnfix = { viewModel?.unfixProxy(group.name) },
-                                    onSelectNode = { proxyName -> onSelectProxy(group.name, proxyName) },
-                                    onToggle = { toggleGroup(group.name) },
-                                )
-                            }
+                        CardSegment(
+                            isFirst = true,
+                            isLast = currentFraction <= 0.01f,
+                            modifier = Modifier.animateItem(placementSpec = null),
+                            bottomCornerRadius = headerBottomCorner,
+                            outerTopPadding = 12.dp,
+                        ) {
+                            ProxyGroupHeader(
+                                group = group,
+                                showIcon = showGroupIcons,
+                                visibleNodes = displayNodes,
+                                availableNodeCount = group.all.count { nodeName ->
+                                    nodeName in groupNames ||
+                                            isBuiltInOutbound(nodeName, group.nodeTypes[nodeName].orEmpty()) ||
+                                            (group.delays[nodeName] ?: -1) >= 0
+                                },
+                                nowText = nowDisplayText(group, groups, showFinalOutbound),
+                                isExpanded = isExpanded,
+                                expandProgress = groupProgress,
+                                isTesting = group.name in uiState.testingGroups,
+                                onTestDelay = { viewModel?.testGroupDelay(group.name) },
+                                onUnfix = { viewModel?.unfixProxy(group.name) },
+                                onSelectNode = { proxyName -> onSelectProxy(group.name, proxyName) },
+                                onToggle = { toggleGroup(group.name) },
+                            )
+                        }
+                    }
+
+                    if (rows.isNotEmpty()) {
+                        val lastRowIndex = rows.lastIndex
+                        val rowCount = rows.size
+                        val groupExpandProgress = expandProgress[group.name]
+                        val onSelectThisGroup: (String) -> Unit = { proxyName ->
+                            onSelectProxy(group.name, proxyName)
                         }
 
-                        if (rows.isNotEmpty()) {
-                            val lastRowIndex = rows.lastIndex
-                            val rowCount = rows.size
-                            val groupExpandProgress = expandProgress[group.name]
-                            val onSelectThisGroup: (String) -> Unit = { proxyName ->
-                                onSelectProxy(group.name, proxyName)
-                            }
+                        // 动态计算当前露出的最底行，赋予 16dp 底圆角
+                        val activeBottomIndex = when {
+                            currentFraction >= 0.99f -> lastRowIndex
+                            currentFraction <= 0.01f -> -1
+                            else -> (rowCount * currentFraction).toInt().coerceIn(0, lastRowIndex)
+                        }
 
-                            // 动态计算当前露出的最底行，赋予 16dp 底圆角
-                            val activeBottomIndex = when {
-                                currentFraction >= 0.99f -> lastRowIndex
-                                currentFraction <= 0.01f -> -1
-                                else -> (rowCount * currentFraction).toInt().coerceIn(0, lastRowIndex)
-                            }
-
-                            val displayItems = proxyDisplayItems(rows, group, groupByProvider)
-                            displayItems.forEach { displayItem ->
-                                when (displayItem) {
-                                    is ProxyDisplayItem.ProviderHeader -> {
-                                        item(
-                                            key = "provider:${group.name}:${displayItem.provider}",
-                                            contentType = "proxy_provider_header",
+                        val displayItems = proxyDisplayItems(rows, group, groupByProvider)
+                        displayItems.forEach { displayItem ->
+                            when (displayItem) {
+                                is ProxyDisplayItem.ProviderHeader -> {
+                                    item(
+                                        key = "provider:${group.name}:${displayItem.provider}",
+                                        contentType = "proxy_provider_header",
+                                    ) {
+                                        CardSegment(
+                                            isFirst = false,
+                                            isLast = false,
+                                            modifier = Modifier
+                                                .animateItem(placementSpec = null)
+                                                .clipToBounds(),
+                                            insidePadding = PaddingValues(
+                                                start = 16.dp,
+                                                end = 16.dp,
+                                            ),
                                         ) {
-                                            CardSegment(
-                                                isFirst = false,
-                                                isLast = false,
-                                                modifier = Modifier
-                                                    .animateItem(placementSpec = null)
-                                                    .clipToBounds(),
-                                                insidePadding = PaddingValues(
-                                                    start = 16.dp,
-                                                    end = 16.dp,
-                                                ),
-                                            ) {
-                                                // 标题从展开第一帧就随进度同步长出，不等完全展开再插入，
-                                                // 避免动画结束时突然多一行造成视觉卡顿
-                                                val expand = groupExpandProgress?.floatValue ?: currentFraction
-                                                val revealedRows = rowCount * expand
-                                                val headerFraction = if (displayItem.firstNodeRowIndex == 0) {
-                                                    revealedRows.coerceIn(0f, 1f)
-                                                } else {
-                                                    (revealedRows - displayItem.firstNodeRowIndex + 1f)
-                                                        .coerceIn(0f, 1f)
-                                                }
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(36.dp * headerFraction)
-                                                        .clipToBounds(),
-                                                ) {
-                                                    Text(
-                                                        text = displayItem.provider,
-                                                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
-                                                        fontSize = 13.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = MiuixTheme.colorScheme.onSurface,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                    )
-                                                }
+                                            // 标题从展开第一帧就随进度同步长出，不等完全展开再插入，
+                                            // 避免动画结束时突然多一行造成视觉卡顿
+                                            val expand = groupExpandProgress?.floatValue ?: currentFraction
+                                            val revealedRows = rowCount * expand
+                                            val headerFraction = if (displayItem.firstNodeRowIndex == 0) {
+                                                revealedRows.coerceIn(0f, 1f)
+                                            } else {
+                                                (revealedRows - displayItem.firstNodeRowIndex + 1f)
+                                                    .coerceIn(0f, 1f)
                                             }
-                                        }
-                                    }
-
-                                    is ProxyDisplayItem.NodeRow -> {
-                                        val rowIndex = displayItem.nodeRowIndex
-                                        val isCurrentBottom = rowIndex == activeBottomIndex
-                                        val rowBottomCorner = if (isCurrentBottom) 16.dp else 0.dp
-
-                                        item(
-                                            key = "nodes:${group.name}:$rowIndex",
-                                            contentType = "proxy_node_row",
-                                        ) {
-                                            CardSegment(
-                                                isFirst = false,
-                                                isLast = isCurrentBottom,
+                                            Box(
                                                 modifier = Modifier
-                                                    .animateItem(placementSpec = null)
+                                                    .fillMaxWidth()
+                                                    .height(36.dp * headerFraction)
                                                     .clipToBounds(),
-                                                bottomCornerRadius = rowBottomCorner,
-                                                insidePadding = PaddingValues(
-                                                    start = 12.dp,
-                                                    end = 12.dp,
-                                                ),
                                             ) {
-                                                ProxyNodeRow(
-                                                    row = displayItem.row,
-                                                    group = group,
-                                                    singleColumnProgress = singleColumnProgress,
-                                                    expandProgress = groupExpandProgress,
-                                                    rowIndex = rowIndex,
-                                                    rowCount = rowCount,
-                                                    testingNodes = uiState.testingNodes,
-                                                    onTestNodeDelay = onTestNodeDelay,
-                                                    onSelect = onSelectThisGroup,
+                                                Text(
+                                                    text = displayItem.provider,
+                                                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MiuixTheme.colorScheme.onSurface,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
                                                 )
                                             }
                                         }
                                     }
                                 }
+
+                                is ProxyDisplayItem.NodeRow -> {
+                                    val rowIndex = displayItem.nodeRowIndex
+                                    val isCurrentBottom = rowIndex == activeBottomIndex
+                                    val rowBottomCorner = if (isCurrentBottom) 16.dp else 0.dp
+
+                                    item(
+                                        key = "nodes:${group.name}:$rowIndex",
+                                        contentType = "proxy_node_row",
+                                    ) {
+                                        CardSegment(
+                                            isFirst = false,
+                                            isLast = isCurrentBottom,
+                                            modifier = Modifier
+                                                .animateItem(placementSpec = null)
+                                                .clipToBounds(),
+                                            bottomCornerRadius = rowBottomCorner,
+                                            insidePadding = PaddingValues(
+                                                start = 12.dp,
+                                                end = 12.dp,
+                                            ),
+                                        ) {
+                                            ProxyNodeRow(
+                                                row = displayItem.row,
+                                                group = group,
+                                                singleColumnProgress = singleColumnProgress,
+                                                expandProgress = groupExpandProgress,
+                                                rowIndex = rowIndex,
+                                                rowCount = rowCount,
+                                                testingNodes = uiState.testingNodes,
+                                                onTestNodeDelay = onTestNodeDelay,
+                                                onSelect = onSelectThisGroup,
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                    }
-                    item(key = "bottom_spacer") {
-                        Spacer(Modifier.padding(bottom = 12.dp))
-                    }
                 }
-                ProxyGroupNodesSheet(
-                    show = popupGroupName != null,
-                    group = sheetGroup,
-                    displayNodes = sheetGroup?.let { visibleNodesFor(it) } ?: emptyList(),
-                    sortOption = sortOption,
-                    singleColumn = singleColumn,
-                    groupByProvider = groupByProvider,
-                    nowText = sheetGroup?.let { nowDisplayText(it, groups, showFinalOutbound) }.orEmpty(),
-                    testingGroups = uiState.testingGroups,
-                    testingNodes = uiState.testingNodes,
-                    onDismiss = { popupGroupName = null },
-                    onTestDelay = { groupName -> viewModel?.testGroupDelay(groupName) },
-                    onUnfix = { groupName -> viewModel?.unfixProxy(groupName) },
-                    onTestNodeDelay = onTestNodeDelay,
-                    onSelect = onSelectProxy,
-                )
+                }
+                item(key = "bottom_spacer") {
+                    Spacer(Modifier.padding(bottom = 12.dp))
+                }
             }
+            ProxyGroupNodesSheet(
+                show = popupGroupName != null,
+                group = sheetGroup,
+                displayNodes = sheetGroup?.let { visibleNodesFor(it) } ?: emptyList(),
+                sortOption = sortOption,
+                singleColumn = singleColumn,
+                groupByProvider = groupByProvider,
+                nowText = sheetGroup?.let { nowDisplayText(it, groups, showFinalOutbound) }.orEmpty(),
+                testingGroups = uiState.testingGroups,
+                testingNodes = uiState.testingNodes,
+                onDismiss = { popupGroupName = null },
+                onTestDelay = { groupName -> viewModel?.testGroupDelay(groupName) },
+                onUnfix = { groupName -> viewModel?.unfixProxy(groupName) },
+                onTestNodeDelay = onTestNodeDelay,
+                onSelect = onSelectProxy,
+            )
         }
     }
 }

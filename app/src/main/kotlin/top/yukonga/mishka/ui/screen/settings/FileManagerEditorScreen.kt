@@ -1,5 +1,6 @@
 package top.yukonga.mishka.ui.screen.settings
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,12 +17,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +28,9 @@ import top.yukonga.mishka.R
 import top.yukonga.mishka.data.bridge.MishkaCoreBridge
 import top.yukonga.mishka.platform.ProfileFileManager
 import top.yukonga.mishka.platform.showToast
+import top.yukonga.mishka.ui.component.AdaptiveTopAppBar
+import top.yukonga.mishka.ui.component.BackNavigationIcon
+import top.yukonga.mishka.ui.component.TopBarIconButton
 import top.yukonga.mishka.ui.component.blur.BlurredBar
 import top.yukonga.mishka.ui.component.blur.rememberBlurBackdrop
 import top.yukonga.mishka.custom.anchor.MishkaAnchorPanel
@@ -40,11 +40,7 @@ import top.yukonga.mishka.ui.theme.LocalAppDarkMode
 import top.yukonga.mishka.ui.util.horizontalCutoutPadding
 import top.yukonga.mishka.viewmodel.SubscriptionViewModel
 import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -53,14 +49,15 @@ import top.yukonga.miuix.kmp.icon.extended.Link
 import top.yukonga.miuix.kmp.icon.extended.Sort
 import top.yukonga.miuix.kmp.icon.extended.Tune
 import top.yukonga.miuix.kmp.icon.extended.Undo
-import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.scripta.editor.CodeEditor
 import top.yukonga.scripta.editor.EditorColors
 import top.yukonga.scripta.editor.EditorLanguage
 import top.yukonga.scripta.editor.rememberCodeEditorController
+import top.yukonga.miuix.kmp.icon.glass.Ok as GlassOk
 import top.yukonga.scripta.editor.text.TextPosition
 
+@SuppressLint("LocalContextGetResourceValueCall")
 @Composable
 fun FileManagerEditorScreen(
     uuid: String,
@@ -94,7 +91,6 @@ fun FileManagerEditorScreen(
 
     val backdrop = rememberBlurBackdrop()
     val blurActive = backdrop != null
-    val barColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
 
     fun tidyConfig() {
         when (val outcome = ConfigTidy.apply(controller.getText())) {
@@ -136,22 +132,12 @@ fun FileManagerEditorScreen(
         topBar = {
             BlurredBar(backdrop = backdrop, blurActive = blurActive) {
                 // 编辑屏纵向空间优先，固定小顶栏（编辑器内部滚动不经宿主 nestedScroll，大标题也无法折叠）
-                SmallTopAppBar(
+                AdaptiveTopAppBar(
                     title = relativePath,
-                    color = barColor,
+                    expandable = false,
                     navigationIcon = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = onBack) {
-                                val ld = LocalLayoutDirection.current
-                                Icon(
-                                    imageVector = MiuixIcons.Back,
-                                    contentDescription = stringResource(R.string.common_back),
-                                    tint = MiuixTheme.colorScheme.onSurface,
-                                    modifier = Modifier.graphicsLayer {
-                                        scaleX = if (ld == LayoutDirection.Rtl) -1f else 1f
-                                    },
-                                )
-                            }
+                            BackNavigationIcon(onBack)
                             // 与文件名同处导航区，显示在「config.yaml」标题左侧。
                             if (isYamlPath(relativePath)) {
                                 IconButton(onClick = { tidyConfig() }) {
@@ -194,8 +180,11 @@ fun FileManagerEditorScreen(
                             }
                         }
                         val canSave = controller.isModified && !isSaving && fileManager != null
-                        IconButton(
+                        TopBarIconButton(
                             enabled = canSave,
+                            isLoading = isSaving,
+                            glassIcon = MiuixIcons.Glass.GlassOk,
+                            contentDescription = stringResource(R.string.file_manager_save),
                             onClick = onSave@{
                                 if (fileManager == null) return@onSave
                                 // 版本号与文本必须同刻捕获：校验期间的继续编辑不能被 markSaved 误吞
@@ -237,18 +226,7 @@ fun FileManagerEditorScreen(
                                     }
                                 }
                             },
-                        ) {
-                            if (isSaving) {
-                                CircularProgressIndicator(size = 20.dp, strokeWidth = 2.dp)
-                            } else {
-                                Icon(
-                                    imageVector = MiuixIcons.Ok,
-                                    contentDescription = stringResource(R.string.file_manager_save),
-                                    tint = if (canSave) MiuixTheme.colorScheme.onSurface
-                                    else MiuixTheme.colorScheme.disabledOnSecondaryVariant,
-                                )
-                            }
-                        }
+                        )
                     },
                 )
             }
@@ -257,8 +235,8 @@ fun FileManagerEditorScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .horizontalCutoutPadding()
                 .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
+                .horizontalCutoutPadding()
                 .padding(top = innerPadding.calculateTopPadding()),
         ) {
             Card(
