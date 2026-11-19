@@ -118,13 +118,19 @@ jobs:
       - name: Compile Kotlin diagnostics (temp)
         continue-on-error: true
         run: |
-          ./gradlew "-Pmihomo.version=${MIHOMO_VERSION}" :app:compileDebugKotlin --continue 2>&1 | tee /tmp/compile.log > /dev/null
+          set -o pipefail
+          ./gradlew "-Pmihomo.version=${MIHOMO_VERSION}" :app:assembleDebug --stacktrace 2>&1 | tee /tmp/compile.log > /dev/null || true
           {
-            echo '## Kotlin compile errors'
+            echo '## Build diagnostics'
             echo '```'
-            grep -E '^e: |error: |ERROR:' /tmp/compile.log | head -120
+            grep -E '^e: |error: |Caused by:|FAILURE:|What went wrong:|\* Exception is:|> Task .* FAILED|A problem occurred' /tmp/compile.log | head -60
+            echo '```'
+            echo '## Tail 120 lines'
+            echo '```'
+            tail -120 /tmp/compile.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
 
       - name: Build Debug APK
         run: ./gradlew "-Pmihomo.version=${MIHOMO_VERSION}" :app:assembleDebug
