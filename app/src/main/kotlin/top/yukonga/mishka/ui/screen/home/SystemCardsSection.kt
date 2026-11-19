@@ -39,6 +39,7 @@ import kotlinx.datetime.toLocalDateTime
 import top.yukonga.mishka.R
 import top.yukonga.mishka.platform.NetworkAddressType
 import top.yukonga.mishka.ui.component.verticalScrollbar
+import top.yukonga.mishka.ui.component.blur.LocalPageBackdrop
 import top.yukonga.mishka.ui.util.sheetContentSafePadding
 import top.yukonga.mishka.ui.util.sheetHeightTransition
 import top.yukonga.mishka.util.FormatUtils
@@ -52,13 +53,13 @@ import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.glass.GlassBottomSheet
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.squircle.squircleBackground
 import top.yukonga.miuix.kmp.theme.LocalDismissState
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.window.WindowBottomSheet
 import kotlin.math.roundToInt
 import kotlin.time.Instant
 
@@ -149,8 +150,9 @@ internal fun SubscriptionTrafficDialog(
     onUpdateAll: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    WindowBottomSheet(
+    GlassBottomSheet(
         show = show,
+        backdrop = LocalPageBackdrop.current,
         title = stringResource(R.string.home_subscription_provider_traffic),
         onDismissRequest = onDismiss,
         startAction = {

@@ -71,8 +71,7 @@ internal object RootRuntimeCache {
         repository: SubscriptionRepositoryImpl,
         ownedEpoch: Long,
     ): Boolean {
-        if (!isRuntimeUuid(uuid)) return false
-        return ProfileProcessor.withProcessLock {
+        return isRuntimeUuid(uuid) && ProfileProcessor.withProcessLock {
             sandboxLock.withLock {
                 currentCoroutineContext().ensureActive()
                 if (epochOf(uuid) != ownedEpoch) {
@@ -203,8 +202,7 @@ internal object RootRuntimeCache {
     }
 
     private fun sameFileContent(left: File, right: File): Boolean {
-        if (!left.isFile || !right.isFile || left.length() != right.length()) return false
-        return sha256(left).contentEquals(sha256(right))
+        return !(!left.isFile || !right.isFile || left.length() != right.length()) && sha256(left).contentEquals(sha256(right))
     }
 
     private fun sha256(file: File): ByteArray {
@@ -236,8 +234,7 @@ internal fun providerCacheRels(runtime: File): List<String> {
 }
 
 private fun isRuntimeUuid(uuid: String): Boolean {
-    if (uuid.isEmpty() || uuid.length > 128 || uuid == "." || uuid == "..") return false
-    return uuid.none { it == '/' || it == '\\' || it == '\u0000' || it == '\n' || it == '\r' }
+    return !(uuid.isEmpty() || uuid.length > 128 || uuid == "." || uuid == "..") && uuid.none { it == '/' || it == '\\' || it == '\u0000' || it == '\n' || it == '\r' }
 }
 
 /**

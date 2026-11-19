@@ -14,64 +14,59 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.mishka.R
-import top.yukonga.mishka.platform.PlatformStorage
-import top.yukonga.mishka.platform.ProxyServiceController
-import top.yukonga.mishka.platform.StorageKeys
-import top.yukonga.mishka.platform.showToast
 import top.yukonga.mishka.domain.model.TunOverride
+import top.yukonga.mishka.platform.ProxyServiceController
+import top.yukonga.mishka.platform.showToast
 import top.yukonga.mishka.service.ConfigGenerator
 import top.yukonga.mishka.service.SystemIpv6
+import top.yukonga.mishka.viewmodel.SubscriptionViewModel
+import top.yukonga.mishka.platform.PlatformStorage
+import top.yukonga.mishka.platform.StorageKeys
 import top.yukonga.mishka.ui.component.AdaptiveTopAppBar
+import top.yukonga.mishka.ui.component.verticalScrollbar
+import top.yukonga.mishka.ui.component.BackNavigationIcon
 import top.yukonga.mishka.ui.component.CardItem
+import top.yukonga.mishka.ui.component.GlassDialogTextButton
 import top.yukonga.mishka.ui.component.RestartRequiredHint
 import top.yukonga.mishka.ui.component.TetherInterfaceEditDialog
 import top.yukonga.mishka.ui.component.blur.BlurredBar
+import top.yukonga.mishka.ui.component.blur.LocalPageBackdrop
+import top.yukonga.mishka.ui.component.blur.PageBackdropBox
 import top.yukonga.mishka.ui.component.blur.rememberBlurBackdrop
 import top.yukonga.mishka.ui.component.groupedCardItems
+import top.yukonga.mishka.ui.component.overScrollVertical
 import top.yukonga.mishka.ui.component.tetherInterfaceSummary
 import top.yukonga.mishka.ui.util.horizontalCutoutPadding
-import top.yukonga.mishka.viewmodel.SubscriptionViewModel
-import top.yukonga.mishka.ui.component.verticalScrollbar
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.blur.layerBackdrop
-import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.glass.GlassDialog
+import top.yukonga.miuix.kmp.glass.GlassDialogButtonRole
+import top.yukonga.miuix.kmp.glass.GlassDropdownPreference
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
-import top.yukonga.miuix.kmp.window.WindowDialog
 
 /**
  * ROOT 模式专属设置页。仅在 ROOT 模式下可见。
@@ -80,7 +75,6 @@ import top.yukonga.miuix.kmp.window.WindowDialog
  * - TUN 设备名称（mihomo 创建的 TUN 接口名，代理运行时不可改）
  * - 热点客户端流量处置（绕过代理 / 走代理）
  * - 热点接口名列表（手填 + 扫描辅助）
- * - 系统：系统 IPv6 开关（默认关闭，实时显示首选上网 APN 的 IPv6 协议状态）
  */
 @Composable
 fun RootSettingsScreen(
@@ -93,6 +87,13 @@ fun RootSettingsScreen(
     onBack: () -> Unit = {},
 ) {
     val scrollBehavior = MiuixScrollBehavior()
+
+    var tunDevice by remember {
+        mutableStateOf(storage.getString(StorageKeys.ROOT_TUN_DEVICE, DEFAULT_TUN_DEVICE))
+    }
+    var showTunDeviceDialog by remember { mutableStateOf(false) }
+    val tunDeviceTextState = rememberTextFieldState()
+
     val context = LocalContext.current
     val serviceController = remember(context) { ProxyServiceController(context) }
     val activeProfileId = storage.getString(StorageKeys.ACTIVE_PROFILE_UUID, "").takeIf { it.isNotEmpty() }
@@ -114,19 +115,17 @@ fun RootSettingsScreen(
         preferUserTunOverrides = preferAppValues
         profileTunConfigLoaded = true
     }
-
     val profileTunDevice = profileTunConfig?.device?.trim()?.takeIf { it.isNotEmpty() }
-    var tunDevice by remember {
-        mutableStateOf(storage.getString(StorageKeys.ROOT_TUN_DEVICE, DEFAULT_TUN_DEVICE))
-    }
     val appTunDeviceOverride = userTunDeviceOverride?.trim()?.takeIf { it.isNotEmpty() }
     val effectiveTunDevice = profileTunDevice ?: appTunDeviceOverride ?: tunDevice
     val canEditTunDevice = !isProxyRunning && profileTunConfigLoaded && profileTunDevice == null && appTunDeviceOverride == null
-    var showTunDeviceDialog by remember { mutableStateOf(false) }
-    val tunDeviceTextState = rememberTextFieldState()
 
     var jumboMtu by remember(activeProfileId) {
         mutableStateOf(storage.getString(StorageKeys.ROOT_TUN_JUMBO_MTU, "true") == "true")
+    }
+
+    var allowIpv6 by remember {
+        mutableStateOf(storage.getString(StorageKeys.VPN_ALLOW_IPV6, "false") == "true")
     }
     LaunchedEffect(activeProfileId, profileTunConfig, profileTunConfigLoaded, preferUserTunOverrides, userTunOverride) {
         if (!profileTunConfigLoaded) return@LaunchedEffect
@@ -147,11 +146,6 @@ fun RootSettingsScreen(
             fallback
         }
     }
-
-    var allowIpv6 by remember {
-        mutableStateOf(storage.getString(StorageKeys.VPN_ALLOW_IPV6, "false") == "true")
-    }
-
     // ---- 系统 IPv6（mihomo_box 逻辑移植，见 service/SystemIpv6.kt）----
     val hasRoot = storage.getString(StorageKeys.HAS_ROOT, "false") == "true"
     val systemScope = rememberCoroutineScope()
@@ -214,263 +208,254 @@ fun RootSettingsScreen(
 
     val backdrop = rememberBlurBackdrop()
     val blurActive = backdrop != null
-    val barColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
 
-    Scaffold(
-        topBar = {
-            BlurredBar(backdrop = backdrop, blurActive = blurActive) {
-                AdaptiveTopAppBar(
-                    title = stringResource(R.string.root_settings_title),
-                    color = barColor,
-                    scrollBehavior = scrollBehavior,
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            val layoutDirection = LocalLayoutDirection.current
-                            Icon(
-                                imageVector = MiuixIcons.Back,
-                                contentDescription = stringResource(R.string.common_back),
-                                tint = MiuixTheme.colorScheme.onSurface,
-                                modifier = Modifier.graphicsLayer {
-                                    scaleX = if (layoutDirection == LayoutDirection.Rtl) -1f else 1f
+    PageBackdropBox {
+        Scaffold(
+            topBar = {
+                BlurredBar(backdrop = backdrop, blurActive = blurActive) {
+                    AdaptiveTopAppBar(
+                        title = stringResource(R.string.root_settings_title),
+                        scrollBehavior = scrollBehavior,
+                        navigationIcon = { BackNavigationIcon(onBack) },
+                    )
+                }
+            },
+        ) { innerPadding ->
+            val scrollbarListState = rememberLazyListState()
+            LazyColumn(
+                state = scrollbarListState,
+                modifier = Modifier
+                    .verticalScrollbar(scrollbarListState)
+                    .fillMaxSize()
+                    .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
+                    .horizontalCutoutPadding()
+                    .scrollEndHaptic()
+                    .overScrollVertical(scrollBehavior)
+                    .nestedScroll(scrollBehavior.nestedScrollConnection),
+                contentPadding = PaddingValues(
+                    top = innerPadding.calculateTopPadding(),
+                ),
+            ) {
+                item { RestartRequiredHint() }
+                item { SmallTitle(text = stringResource(R.string.root_section_device)) }
+                groupedCardItems(
+                    keyPrefix = "root_device",
+                    outerBottomPadding = 12.dp,
+                    items = listOf(
+                        CardItem("tunDevice") {
+                            ArrowPreference(
+                                title = stringResource(R.string.settings_tun_device),
+                                summary = profileTunDevice?.let {
+                                    stringResource(R.string.root_tun_device_profile_summary, it)
+                                } ?: appTunDeviceOverride?.let {
+                                    stringResource(R.string.root_tun_device_override_summary, it)
+                                } ?: effectiveTunDevice,
+                                onClick = {
+                                    tunDeviceTextState.edit { replace(0, length, effectiveTunDevice) }
+                                    showTunDeviceDialog = true
+                                },
+                                enabled = canEditTunDevice,
+                            )
+                        },
+                        CardItem("jumboMtu") {
+                            SwitchPreference(
+                                title = stringResource(R.string.root_tun_jumbo_mtu_title),
+                                summary = stringResource(R.string.root_tun_jumbo_mtu_summary),
+                                checked = jumboMtu,
+                                onCheckedChange = {
+                                    jumboMtu = it
+                                    storage.putString(StorageKeys.ROOT_TUN_JUMBO_MTU, it.toString())
+                                    onJumboMtuChange(it)
                                 },
                             )
-                        }
-                    },
+                        },
+                        CardItem("allowIpv6") {
+                            SwitchPreference(
+                                title = stringResource(R.string.vpn_allow_ipv6),
+                                summary = stringResource(R.string.vpn_allow_ipv6_summary),
+                                checked = allowIpv6,
+                                onCheckedChange = {
+                                    allowIpv6 = it
+                                    storage.putString(StorageKeys.VPN_ALLOW_IPV6, it.toString())
+                                },
+                            )
+                        },
+                    ),
                 )
-            }
-        },
-    ) { innerPadding ->
-        val scrollbarListState = rememberLazyListState()
-        LazyColumn(
-            state = scrollbarListState,
-            modifier = Modifier.verticalScrollbar(scrollbarListState)
-                .fillMaxSize()
-                .horizontalCutoutPadding()
-                .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier)
-                .scrollEndHaptic()
-                .overScrollVertical()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-            contentPadding = PaddingValues(
-                top = innerPadding.calculateTopPadding(),
-            ),
-        ) {
-            item { RestartRequiredHint() }
-            item { SmallTitle(text = stringResource(R.string.root_section_device)) }
-            groupedCardItems(
-                keyPrefix = "root_device",
-                outerBottomPadding = 12.dp,
-                items = listOf(
-                    CardItem("tunDevice") {
-                        ArrowPreference(
-                            title = stringResource(R.string.settings_tun_device),
-                            summary = profileTunDevice?.let {
-                                stringResource(R.string.root_tun_device_profile_summary, it)
-                            } ?: appTunDeviceOverride?.let {
-                                stringResource(R.string.root_tun_device_override_summary, it)
-                            } ?: effectiveTunDevice,
-                            onClick = {
-                                tunDeviceTextState.edit { replace(0, length, effectiveTunDevice) }
-                                showTunDeviceDialog = true
-                            },
-                            enabled = canEditTunDevice,
-                        )
-                    },
-                    CardItem("jumboMtu") {
-                        SwitchPreference(
-                            title = stringResource(R.string.root_tun_jumbo_mtu_title),
-                            summary = stringResource(R.string.root_tun_jumbo_mtu_summary),
-                            checked = jumboMtu,
-                            onCheckedChange = {
-                                jumboMtu = it
-                                storage.putString(StorageKeys.ROOT_TUN_JUMBO_MTU, it.toString())
-                                onJumboMtuChange(it)
-                            },
-                        )
-                    },
-                    CardItem("allowIpv6") {
-                        SwitchPreference(
-                            title = stringResource(R.string.vpn_allow_ipv6),
-                            summary = stringResource(R.string.vpn_allow_ipv6_summary),
-                            checked = allowIpv6,
-                            onCheckedChange = {
-                                allowIpv6 = it
-                                storage.putString(StorageKeys.VPN_ALLOW_IPV6, it.toString())
-                            },
-                        )
-                    },
-                ),
-            )
-            item { SmallTitle(text = stringResource(R.string.root_section_tether)) }
-            if (showTproxyWarning) {
-                item {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp)
-                            .padding(bottom = 12.dp),
-                        colors = CardDefaults.defaultColors(
-                            color = MiuixTheme.colorScheme.errorContainer,
-                            contentColor = MiuixTheme.colorScheme.onErrorContainer,
-                        ),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.root_tether_tproxy_unavailable_warning),
-                            fontSize = 13.sp,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                        )
-                    }
-                }
-            }
-            groupedCardItems(
-                keyPrefix = "root_tether",
-                outerBottomPadding = 12.dp,
-                items = listOf(
-                    CardItem("mode") {
-                        if (isTproxy || isEbpf) {
-                            // TPROXY：整条链路由 iptables 透明代理；EBPF：热点劫持同样不归 App 管，
-                            // 两种模式都不需要 BYPASS/PROXY 切换
+                item { SmallTitle(text = stringResource(R.string.root_section_tether)) }
+                if (showTproxyWarning) {
+                    item {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                                .padding(bottom = 12.dp),
+                            colors = CardDefaults.defaultColors(
+                                color = MiuixTheme.colorScheme.errorContainer,
+                                contentColor = MiuixTheme.colorScheme.onErrorContainer,
+                            ),
+                        ) {
                             Text(
-                                text = stringResource(
-                                    if (isTproxy) {
-                                        R.string.root_tproxy_tether_note
-                                    } else {
-                                        R.string.root_ebpf_tether_note
-                                    }
-                                ),
+                                text = stringResource(R.string.root_tether_tproxy_unavailable_warning),
                                 fontSize = 13.sp,
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                             )
-                        } else {
-                            val tetherItems = listOf(bypassLabel, proxyLabel)
-                            val selectedIndex = tetherModeValues.indexOf(tetherMode).coerceAtLeast(0)
-                            OverlayDropdownPreference(
-                                title = stringResource(R.string.root_tether_mode_title),
-                                summary = tetherItems[selectedIndex],
-                                items = tetherItems,
-                                selectedIndex = selectedIndex,
-                                onSelectedIndexChange = { index ->
-                                    val value = tetherModeValues[index]
-                                    tetherMode = value
-                                    storage.putString(StorageKeys.ROOT_TETHER_MODE, value)
+                        }
+                    }
+                }
+                groupedCardItems(
+                    keyPrefix = "root_tether",
+                    outerBottomPadding = 12.dp,
+                    items = listOf(
+                        CardItem("mode") {
+                            if (isTproxy || isEbpf) {
+                                // TPROXY：整条链路由 iptables 透明代理；EBPF：热点劫持同样不归 App 管，
+                                // 两种模式都不需要 BYPASS/PROXY 切换
+                                Text(
+                                    text = stringResource(
+                                        if (isTproxy) {
+                                            R.string.root_tproxy_tether_note
+                                        } else {
+                                            R.string.root_ebpf_tether_note
+                                        }
+                                    ),
+                                    fontSize = 13.sp,
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                )
+                            } else {
+                                val tetherItems = listOf(bypassLabel, proxyLabel)
+                                val selectedIndex = tetherModeValues.indexOf(tetherMode).coerceAtLeast(0)
+                                GlassDropdownPreference(
+                                    title = stringResource(R.string.root_tether_mode_title),
+                                    backdrop = LocalPageBackdrop.current,
+                                    summary = tetherItems[selectedIndex],
+                                    items = tetherItems,
+                                    selectedIndex = selectedIndex,
+                                    onSelectedIndexChange = { index ->
+                                        val value = tetherModeValues[index]
+                                        tetherMode = value
+                                        storage.putString(StorageKeys.ROOT_TETHER_MODE, value)
+                                    },
+                                )
+                            }
+                        },
+                        CardItem("ifaces") {
+                            ArrowPreference(
+                                title = stringResource(R.string.root_tether_ifaces_title),
+                                summary = tetherInterfaceSummary(tetherIfaces),
+                                onClick = { showTetherDialog = true },
+                            )
+                        },
+                        CardItem("forceReapply") {
+                            SwitchPreference(
+                                title = stringResource(R.string.root_attach_force_reapply_title),
+                                summary = stringResource(R.string.root_attach_force_reapply_summary),
+                                checked = forceReapply,
+                                onCheckedChange = {
+                                    forceReapply = it
+                                    storage.putString(StorageKeys.ROOT_ATTACH_FORCE_REAPPLY, it.toString())
                                 },
                             )
-                        }
-                    },
-                    CardItem("ifaces") {
-                        ArrowPreference(
-                            title = stringResource(R.string.root_tether_ifaces_title),
-                            summary = tetherInterfaceSummary(tetherIfaces),
-                            onClick = { showTetherDialog = true },
-                        )
-                    },
-                    CardItem("forceReapply") {
-                        SwitchPreference(
-                            title = stringResource(R.string.root_attach_force_reapply_title),
-                            summary = stringResource(R.string.root_attach_force_reapply_summary),
-                            checked = forceReapply,
-                            onCheckedChange = {
-                                forceReapply = it
-                                storage.putString(StorageKeys.ROOT_ATTACH_FORCE_REAPPLY, it.toString())
-                            },
-                        )
-                    },
-                ),
-            )
-            item { SmallTitle(text = stringResource(R.string.root_section_system)) }
-            groupedCardItems(
-                keyPrefix = "root_system",
-                outerBottomPadding = 12.dp,
-                items = listOf(
-                    CardItem("systemIpv6") {
-                        SwitchPreference(
-                            title = stringResource(R.string.root_system_ipv6_title),
-                            summary = systemIpv6Summary,
-                            checked = systemIpv6,
-                            onCheckedChange = { value ->
-                                val prevValue = systemIpv6
-                                val prevApn = apnRows
-                                // 纯内存乐观更新开关与 APN 显示（主线程 0 磁盘 IO），后台毫秒级写 sysctl/config
-                                systemIpv6 = value
-                                prevApn?.let { apnRows = SystemIpv6.predictApnInMemory(value, it) }
-                                systemScope.launch {
-                                    val ok = withContext(Dispatchers.IO) { SystemIpv6.apply(context, value) }
-                                    if (ok) {
-                                        storage.putString(StorageKeys.ROOT_SYSTEM_IPV6, value.toString())
-                                        withContext(Dispatchers.IO) { SystemIpv6.readCachedPreferApn(context) }?.let {
-                                            apnRows = it
+                        },
+                    ),
+                )
+                item { SmallTitle(text = stringResource(R.string.root_section_system)) }
+                groupedCardItems(
+                    keyPrefix = "root_system",
+                    outerBottomPadding = 12.dp,
+                    items = listOf(
+                        CardItem("systemIpv6") {
+                            SwitchPreference(
+                                title = stringResource(R.string.root_system_ipv6_title),
+                                summary = systemIpv6Summary,
+                                checked = systemIpv6,
+                                onCheckedChange = { value ->
+                                    val prevValue = systemIpv6
+                                    val prevApn = apnRows
+                                    // 纯内存乐观更新开关与 APN 显示（主线程 0 磁盘 IO），后台毫秒级写 sysctl/config
+                                    systemIpv6 = value
+                                    prevApn?.let { apnRows = SystemIpv6.predictApnInMemory(value, it) }
+                                    systemScope.launch {
+                                        val ok = withContext(Dispatchers.IO) { SystemIpv6.apply(context, value) }
+                                        if (ok) {
+                                            storage.putString(StorageKeys.ROOT_SYSTEM_IPV6, value.toString())
+                                            withContext(Dispatchers.IO) { SystemIpv6.readCachedPreferApn(context) }?.let {
+                                                apnRows = it
+                                            }
+                                            // 配置已改写：代理在运行中则自动重启以生效（未运行时 restartWhenReady 不做任何事）
+                                            activeProfileId?.let { serviceController.restartWhenReady(it) }
+                                            // 后台 APN 改写完成后再拉取一次真实校验值刷新展示
+                                            kotlinx.coroutines.delay(1800)
+                                            val live = withContext(Dispatchers.IO) { SystemIpv6.readPreferApn(context) }
+                                            if (live.isNotEmpty()) apnRows = live
+                                        } else {
+                                            systemIpv6 = prevValue
+                                            apnRows = prevApn
+                                            showToast(ipv6ApplyFailedText)
                                         }
-                                        // 配置已改写：代理在运行中则自动重启以生效（未运行时 restartWhenReady 不做任何事）
-                                        activeProfileId?.let { serviceController.restartWhenReady(it) }
-                                        // 后台 APN 改写完成后再拉取一次真实校验值刷新展示
-                                        kotlinx.coroutines.delay(1800)
-                                        val live = withContext(Dispatchers.IO) { SystemIpv6.readPreferApn(context) }
-                                        if (live.isNotEmpty()) apnRows = live
-                                    } else {
-                                        systemIpv6 = prevValue
-                                        apnRows = prevApn
-                                        showToast(ipv6ApplyFailedText)
                                     }
-                                }
-                            },
-                        )
-                    },
-                ),
+                                },
+                            )
+                        },
+                    ),
+                )
+                item {
+                    Spacer(
+                        Modifier
+                            .height(24.dp)
+                            .navigationBarsPadding()
+                    )
+                }
+            }
+        }
+
+        GlassDialog(
+            show = showTunDeviceDialog,
+            backdrop = LocalPageBackdrop.current,
+            title = stringResource(R.string.settings_tun_device),
+            onDismissRequest = { showTunDeviceDialog = false },
+        ) {
+            TextField(
+                state = tunDeviceTextState,
+                modifier = Modifier.fillMaxWidth(),
+                label = stringResource(R.string.network_input_value),
             )
-            item {
-                Spacer(
-                    Modifier
-                        .height(24.dp)
-                        .navigationBarsPadding()
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                GlassDialogTextButton(
+                    text = stringResource(R.string.common_cancel),
+                    modifier = Modifier.weight(1f),
+                    onClick = { showTunDeviceDialog = false },
+                )
+                GlassDialogTextButton(
+                    text = stringResource(R.string.common_confirm),
+                    modifier = Modifier.weight(1f),
+                    role = GlassDialogButtonRole.Primary,
+                    onClick = {
+                        val value = tunDeviceTextState.text.toString().trim().ifEmpty { DEFAULT_TUN_DEVICE }
+                        storage.putString(StorageKeys.ROOT_TUN_DEVICE, value)
+                        tunDevice = value
+                        showTunDeviceDialog = false
+                    },
                 )
             }
         }
-    }
 
-    WindowDialog(
-        show = showTunDeviceDialog,
-        title = stringResource(R.string.settings_tun_device),
-        onDismissRequest = { showTunDeviceDialog = false },
-    ) {
-        TextField(
-            state = tunDeviceTextState,
-            modifier = Modifier.fillMaxWidth(),
-            label = stringResource(R.string.network_input_value),
+        TetherInterfaceEditDialog(
+            show = showTetherDialog,
+            title = stringResource(R.string.root_tether_ifaces_title),
+            initialValue = tetherIfaces,
+            onDismiss = { showTetherDialog = false },
+            onConfirm = { csv ->
+                tetherIfaces = csv
+                storage.putString(StorageKeys.ROOT_TETHER_IFACES, csv)
+            },
         )
-        Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            TextButton(
-                text = stringResource(R.string.common_cancel),
-                modifier = Modifier.weight(1f),
-                onClick = { showTunDeviceDialog = false },
-            )
-            TextButton(
-                text = stringResource(R.string.common_confirm),
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.textButtonColorsPrimary(),
-                onClick = {
-                    val value = tunDeviceTextState.text.toString().trim().ifEmpty { DEFAULT_TUN_DEVICE }
-                    storage.putString(StorageKeys.ROOT_TUN_DEVICE, value)
-                    tunDevice = value
-                    showTunDeviceDialog = false
-                },
-            )
-        }
     }
-
-    TetherInterfaceEditDialog(
-        show = showTetherDialog,
-        title = stringResource(R.string.root_tether_ifaces_title),
-        initialValue = tetherIfaces,
-        onDismiss = { showTetherDialog = false },
-        onConfirm = { csv ->
-            tetherIfaces = csv
-            storage.putString(StorageKeys.ROOT_TETHER_IFACES, csv)
-        },
-    )
 }
 
 private const val DEFAULT_TUN_DEVICE = "Mishka"

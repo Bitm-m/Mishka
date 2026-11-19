@@ -3,11 +3,11 @@ package top.yukonga.mishka.platform
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import top.yukonga.mishka.service.RuntimeOverrideBuilder
 import java.io.File
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
-import top.yukonga.mishka.service.RuntimeOverrideBuilder
 
 enum class NetworkAddressType { Unknown, Tun, Lan, Wan }
 
@@ -40,6 +40,7 @@ class PlatformSystemInfo(context: Context) {
                     }
                     NetworkInfoData()
                 }
+
                 TunMode.RootTun -> {
                     // 使用运行中 /configs 的设备名，不读可能尚未生效的设置，也不猜 fake-IP 段。
                     if (tunDevice.isBlank()) return NetworkInfoData()
@@ -77,8 +78,8 @@ class PlatformSystemInfo(context: Context) {
     private fun addressInfo(name: String, address: InetAddress, isTun: Boolean): NetworkInfoData {
         val bytes = address.address
         val isLocal = address.isSiteLocalAddress || address.isLinkLocalAddress ||
-            (address is Inet4Address && bytes[0].toInt() == 100 && (bytes[1].toInt() and 0xff) in 64..127) ||
-            (bytes.size == 16 && (bytes[0].toInt() and 0xfe) == 0xfc)
+                (address is Inet4Address && bytes[0].toInt() == 100 && (bytes[1].toInt() and 0xff) in 64..127) ||
+                (bytes.size == 16 && (bytes[0].toInt() and 0xfe) == 0xfc)
         return NetworkInfoData(
             localIp = address.hostAddress ?: return NetworkInfoData(),
             interfaceName = name,
