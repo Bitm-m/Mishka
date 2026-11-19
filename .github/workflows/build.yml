@@ -115,26 +115,6 @@ jobs:
       - name: Download GeoIP files
         run: ./gradlew :app:downloadGeoFiles
 
-      - name: Compile Kotlin diagnostics (temp)
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          ./gradlew "-Pmihomo.version=${MIHOMO_VERSION}" :app:assembleDebug --stacktrace 2>&1 | tee /tmp/compile.log > /dev/null || true
-          { grep -E '^e: |Caused by:|FAILURE:|What went wrong:|> Task .* FAILED|A problem occurred|Execution failed' /tmp/compile.log | head -80; echo '--- TAIL ---'; tail -60 /tmp/compile.log; } > /tmp/diag.txt || true
-          python3 - <<'PYEOF'
-          import urllib.parse
-          text = open('/tmp/diag.txt').read() or '(diag empty)'
-          chunk = ''
-          for line in text.splitlines():
-              if len(chunk) + len(line) > 2500:
-                  print('::error::' + urllib.parse.quote(chunk))
-                  chunk = ''
-              chunk += line + '\n'
-          if chunk.strip():
-              print('::error::' + urllib.parse.quote(chunk))
-          PYEOF
-          exit 0
-
       - name: Build Debug APK
         run: ./gradlew "-Pmihomo.version=${MIHOMO_VERSION}" :app:assembleDebug
 
